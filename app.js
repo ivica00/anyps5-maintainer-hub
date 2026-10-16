@@ -374,7 +374,8 @@ function setupSupabaseRealtime() {
     }
 
     try {
-        const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        const sbClient = getSupabaseClient();
+        if (!sbClient) return;
         
         // 1. Listen for PR changes
         sbClient
@@ -2107,7 +2108,9 @@ async function loginWithGitHubOAuth() {
     }
 
     try {
-        const redirectUrl = window.location.origin + window.location.pathname;
+        const redirectUrl = window.location.origin.includes('localhost') 
+            ? window.location.origin + window.location.pathname 
+            : 'https://ivica00.github.io/anyps5-maintainer-hub/';
         const { data, error } = await sb.auth.signInWithOAuth({
             provider: 'github',
             options: {
