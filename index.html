@@ -219,15 +219,26 @@
                 <!-- Filter po kompleksnosti -->
                 <div class="flex items-center gap-1">
                     <span class="text-slate-400">Kompleksnost:</span>
-                    <select id="batch-tier-filter" onchange="renderMinibatches()" class="bg-slate-900 border border-slate-700 text-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-cyan-500 text-xs">
+                    <select id="batch-tier-filter" onchange="renderMinibatches()" class="bg-slate-900 border border-slate-700 text-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-cyan-500 text-xs cursor-pointer">
                         <option value="all">Sve kompleksnosti</option>
-                        <option value="low">🟢 Lagano (7-10 PR-ova u batchu)</option>
-                        <option value="medium">🟡 Srednje (4-6 PR-ova u batchu)</option>
-                        <option value="high">🔴 Kompleksno (1-2 PR-a u batchu)</option>
+                        <option value="low">🟢 Lagano (7-10 PR-ova)</option>
+                        <option value="medium">🟡 Srednje (4-6 PR-ova)</option>
+                        <option value="high">🔴 Kompleksno (1-2 PR-a)</option>
                     </select>
                 </div>
 
-                <div class="ml-auto text-[11px] text-slate-500">
+                <!-- Filter po statusu zaduženja -->
+                <div class="flex items-center gap-1">
+                    <span class="text-slate-400">Dostupnost:</span>
+                    <select id="batch-status-filter" onchange="renderMinibatches()" class="bg-slate-900 border border-slate-700 text-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-cyan-500 text-xs cursor-pointer">
+                        <option value="all">Svi paketi</option>
+                        <option value="available" selected>🟢 Samo slobodni paketi</option>
+                        <option value="mine">👤 Moji preuzeti paketi</option>
+                        <option value="claimed">🔒 Preuzeto od drugih</option>
+                    </select>
+                </div>
+
+                <div class="ml-auto text-[11px] text-slate-500 whitespace-nowrap">
                     Prikazano: <strong id="batches-visible-count" class="text-cyan-400 font-mono">0</strong> paketa
                 </div>
             </div>

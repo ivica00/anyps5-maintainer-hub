@@ -1,5 +1,5 @@
 /**
- * AnyPS5 Maintainer Workspace - Robust REST & Realtime Supabase Client + Minibatch Studio
+ * AnyPS5 Maintainer Workspace - Supabase Server-Side Minibatches & Collision Prevention
  */
 
 const SUPABASE_URL = 'https://nzaxslgwsygpgwqcllpi.supabase.co';
@@ -31,15 +31,13 @@ document.addEventListener('DOMContentLoaded', () => {
     loadLocalFallbackData();
     setupMaintainerSelector();
     setupRepoFilters();
-    generateMinibatches();
     renderMyPRs();
-    renderMinibatches();
     renderRepoTable();
 
-    // 1. Initial direct REST fetch from Supabase
+    // 1. Initial direct REST fetch from Supabase (PRs & Batches)
     refreshDataFromSupabase();
 
-    // 2. Setup Realtime WebSockets if Supabase JS SDK loaded
+    // 2. Setup Realtime WebSockets for both PRs and Batches
     setupSupabaseRealtime();
 
     // 3. Periodic 60-second auto-sync
@@ -80,7 +78,7 @@ function loadLocalFallbackData() {
 }
 
 // ==========================================
-// SUPABASE REST COMMUNICATION (BULLETPROOF)
+// SUPABASE REST COMMUNICATION (PRs & BATCHES)
 // ==========================================
 
 async function refreshDataFromSupabase(showToastAlert = false) {
@@ -90,17 +88,21 @@ async function refreshDataFromSupabase(showToastAlert = false) {
     try {
         if (statusText) statusText.innerText = 'Osvježavanje...';
 
-        const res = await fetch(`${SUPABASE_URL}/rest/v1/prs?select=*&order=number.desc`, {
+        // 1. Fetch all PRs
+        const prsRes = await fetch(`${SUPABASE_URL}/rest/v1/prs?select=*&order=number.desc`, {
             headers: supabaseHeaders
         });
 
-        if (!res.ok) {
-            throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-        }
+        // 2. Fetch all Server-Side Minibatches
+        const batchesRes = await fetch(`${SUPABASE_URL}/rest/v1/batches?select=*&order=id.asc`, {
+            headers: supabaseHeaders
+        });
 
-        const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
-            state.allPRs = data.map(row => ({
+        if (!prsRes.ok) throw new Error(`PRs fetch failed: ${prsRes.status}`);
+
+        const prData = await prsRes.json();
+        if (Array.isArray(prData) && prData.length > 0) {
+            state.allPRs = prData.map(row => ({
                 number: row.number,
                 title: row.title,
                 author: row.author,
@@ -122,25 +124,47 @@ async function refreshDataFromSupabase(showToastAlert = false) {
                 notes: row.notes || '',
                 checklist: row.checklist || {}
             }));
+        }
 
-            state.supabaseConnected = true;
-            state.lastSyncTime = new Date();
-
-            const timeStr = state.lastSyncTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            if (statusText) statusText.innerText = `🟢 ${data.length} PR (${timeStr})`;
-            if (pill) {
-                pill.className = "text-[10px] px-2.5 py-1 rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-800 font-mono flex items-center gap-1.5 transition";
+        // Parse Server-Side Batches
+        if (batchesRes.ok) {
+            const batchData = await batchesRes.json();
+            if (Array.isArray(batchData)) {
+                state.minibatches = batchData.map(b => {
+                    const prList = (b.pr_numbers || []).map(num => state.allPRs.find(p => p.number === num)).filter(Boolean);
+                    return {
+                        id: b.id,
+                        title: b.title,
+                        category: b.category,
+                        complexity: b.complexity,
+                        complexityLabel: b.complexity_label,
+                        prCount: b.pr_count,
+                        prNumbers: b.pr_numbers || [],
+                        status: b.status || 'available',
+                        claimedBy: b.claimed_by || 'none',
+                        claimedAt: b.claimed_at,
+                        prs: prList,
+                        selectedPRs: new Set(b.pr_numbers || [])
+                    };
+                });
             }
+        }
 
-            // Regenerate minibatches with fresh PR data
-            generateMinibatches();
-            renderMyPRs();
-            renderMinibatches();
-            renderRepoTable();
+        state.supabaseConnected = true;
+        state.lastSyncTime = new Date();
 
-            if (showToastAlert) {
-                showToast(`Sinkronizirano sa Supabaseom (${data.length} PR-ova)`);
-            }
+        const timeStr = state.lastSyncTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        if (statusText) statusText.innerText = `🟢 ${state.allPRs.length} PR (${timeStr})`;
+        if (pill) {
+            pill.className = "text-[10px] px-2.5 py-1 rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-800 font-mono flex items-center gap-1.5 transition";
+        }
+
+        renderMyPRs();
+        renderMinibatches();
+        renderRepoTable();
+
+        if (showToastAlert) {
+            showToast(`Usklađeno sa Supabaseom (${state.minibatches.length} paketa)`);
         }
     } catch (err) {
         console.error('Supabase REST sync error:', err);
@@ -153,18 +177,16 @@ async function refreshDataFromSupabase(showToastAlert = false) {
 
 async function updatePRInSupabase(number, fields) {
     try {
-        const payload = {
-            ...fields,
-            updated_at: new Date().toISOString()
-        };
-
         await fetch(`${SUPABASE_URL}/rest/v1/prs?number=eq.${number}`, {
             method: 'PATCH',
             headers: {
                 ...supabaseHeaders,
                 'Prefer': 'return=minimal'
             },
-            body: JSON.stringify(payload)
+            body: JSON.stringify({
+                ...fields,
+                updated_at: new Date().toISOString()
+            })
         });
     } catch (e) {
         console.error('Supabase update failed:', e);
@@ -174,24 +196,23 @@ async function updatePRInSupabase(number, fields) {
 async function updateBatchPRsInSupabase(numbers, fields) {
     if (!numbers || numbers.length === 0) return;
     try {
-        const payload = {
-            ...fields,
-            updated_at: new Date().toISOString()
-        };
-
         await fetch(`${SUPABASE_URL}/rest/v1/prs?number=in.(${numbers.join(',')})`, {
             method: 'PATCH',
             headers: {
                 ...supabaseHeaders,
                 'Prefer': 'return=minimal'
             },
-            body: JSON.stringify(payload)
+            body: JSON.stringify({
+                ...fields,
+                updated_at: new Date().toISOString()
+            })
         });
     } catch (e) {
         console.error('Batch Supabase update failed:', e);
     }
 }
 
+// Setup Realtime WebSocket for both PRs and Batches
 function setupSupabaseRealtime() {
     if (!window.supabase || typeof window.supabase.createClient !== 'function') {
         return;
@@ -199,34 +220,52 @@ function setupSupabaseRealtime() {
 
     try {
         const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        
+        // 1. Listen for PR changes
         sbClient
-            .channel('public:prs_channel')
+            .channel('public:live_prs')
             .on('postgres_changes', { event: '*', schema: 'public', table: 'prs' }, (payload) => {
                 const updatedRow = payload.new;
                 if (!updatedRow || !updatedRow.number) return;
 
                 const existingPR = state.allPRs.find(p => p.number === updatedRow.number);
                 if (existingPR) {
-                    const wasMine = existingPR.assignedReviewer === state.currentMaintainer;
-                    const isNowMine = updatedRow.assigned_reviewer === state.currentMaintainer;
-
                     existingPR.assignedReviewer = updatedRow.assigned_reviewer || 'none';
                     existingPR.status = updatedRow.status || 'unassigned';
                     existingPR.notes = updatedRow.notes || '';
                     existingPR.checklist = updatedRow.checklist || {};
 
                     renderMyPRs();
-                    renderMinibatches();
                     renderRepoTable();
+                }
+            })
+            .subscribe();
 
-                    if (!wasMine && isNowMine) {
-                        showToast(`Novi PR #${updatedRow.number} dodijeljen tebi!`);
-                    } else if (wasMine && !isNowMine) {
-                        showToast(`PR #${updatedRow.number} preuzeo @${updatedRow.assigned_reviewer}`);
+        // 2. Listen for Server-Side Minibatch locks and claims
+        sbClient
+            .channel('public:live_batches')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'batches' }, (payload) => {
+                const updatedBatch = payload.new;
+                if (!updatedBatch || !updatedBatch.id) return;
+
+                const existingBatch = state.minibatches.find(b => b.id === updatedBatch.id);
+                if (existingBatch) {
+                    const wasClaimedByMe = existingBatch.claimedBy === state.currentMaintainer;
+                    const isNowClaimedByOther = updatedBatch.claimed_by && updatedBatch.claimed_by !== 'none' && updatedBatch.claimed_by !== state.currentMaintainer;
+
+                    existingBatch.status = updatedBatch.status || 'available';
+                    existingBatch.claimedBy = updatedBatch.claimed_by || 'none';
+                    existingBatch.claimedAt = updatedBatch.claimed_at;
+
+                    renderMinibatches();
+
+                    if (!wasClaimedByMe && isNowClaimedByOther) {
+                        showToast(`🔒 @${updatedBatch.claimed_by} je preuzeo paket "${existingBatch.title}"`);
                     }
                 }
             })
             .subscribe();
+
     } catch (err) {
         console.warn('Realtime subscription error:', err);
     }
@@ -234,118 +273,32 @@ function setupSupabaseRealtime() {
 
 
 // ==========================================
-// MINIBATCH CLUSTERING ALGORITHM (1-10 PRs)
+// MINIBATCH STUDIO (SERVER-SIDE LOCKING)
 // ==========================================
-
-function computePRComplexity(p) {
-    const tot = p.totalLines || 0;
-    const fc = p.fileCount || 1;
-    const risk = p.riskLevel || 'low';
-
-    let score = 1;
-    if (tot > 1000) score += 4;
-    else if (tot > 300) score += 2;
-    else if (tot > 100) score += 1;
-
-    if (fc > 10) score += 3;
-    else if (fc > 4) score += 1;
-
-    if (risk === 'high') score += 2;
-    else if (risk === 'medium') score += 1;
-
-    if (score <= 2) return { tier: 'low', maxSize: 10, label: 'Lagano (do 10 PR-ova)' };
-    else if (score <= 5) return { tier: 'medium', maxSize: 5, label: 'Srednje (do 5 PR-ova)' };
-    else return { tier: 'high', maxSize: 2, label: 'Kompleksno (1-2 PR-a)' };
-}
-
-function generateMinibatches() {
-    // Group PRs by category
-    const byCategory = {};
-    state.allPRs.forEach(p => {
-        const cat = p.category || 'Other Core Subsystems';
-        if (!byCategory[cat]) byCategory[cat] = [];
-        byCategory[cat].push(p);
-    });
-
-    const generated = [];
-    let batchCounter = 1;
-
-    Object.keys(byCategory).forEach(cat => {
-        const prList = [...byCategory[cat]];
-
-        // Sort: low complexity first for safe high-yield packing
-        prList.sort((a, b) => {
-            const ca = computePRComplexity(a);
-            const cb = computePRComplexity(b);
-            const tierOrder = { 'low': 1, 'medium': 2, 'high': 3 };
-            if (tierOrder[ca.tier] !== tierOrder[cb.tier]) {
-                return tierOrder[ca.tier] - tierOrder[cb.tier];
-            }
-            return (a.totalLines || 0) - (b.totalLines || 0);
-        });
-
-        const unassigned = [...prList];
-
-        while (unassigned.length > 0) {
-            const lead = unassigned.shift();
-            const { tier, maxSize, label } = computePRComplexity(lead);
-
-            const batchPRs = [lead];
-            const batchFiles = new Set(lead.files || []);
-
-            let i = 0;
-            while (i < unassigned.length && batchPRs.length < maxSize) {
-                const candidate = unassigned[i];
-                const candComp = computePRComplexity(candidate);
-
-                // Cluster similar complexity
-                if (candComp.tier === tier || (tier === 'low' && candComp.tier === 'medium')) {
-                    const candFiles = candidate.files || [];
-                    const hasOverlap = candFiles.some(f => batchFiles.has(f));
-
-                    // DISJUNCT FILE CHECK: 0% internal conflict guarantee!
-                    if (!hasOverlap) {
-                        batchPRs.push(candidate);
-                        candFiles.forEach(f => batchFiles.add(f));
-                        unassigned.splice(i, 1);
-                        continue;
-                    }
-                }
-                i++;
-            }
-
-            const batchId = `mb-${batchCounter++}`;
-            generated.push({
-                id: batchId,
-                title: `${cat} - Batch #${batchCounter - 1}`,
-                category: cat,
-                complexity: tier,
-                complexityLabel: label,
-                maxSize: maxSize,
-                prs: batchPRs,
-                selectedPRs: new Set(batchPRs.map(p => p.number))
-            });
-        }
-    });
-
-    state.minibatches = generated;
-
-    // Update badges
-    const batchBadge = document.getElementById('batches-count-badge');
-    if (batchBadge) batchBadge.innerText = state.minibatches.length;
-}
 
 function renderMinibatches() {
     const container = document.getElementById('minibatches-container');
     const visibleCountEl = document.getElementById('batches-visible-count');
+    const badgeEl = document.getElementById('batches-count-badge');
     if (!container) return;
+
+    if (badgeEl) badgeEl.innerText = state.minibatches.length;
 
     const catFilter = document.getElementById('batch-cat-filter')?.value || 'all';
     const tierFilter = document.getElementById('batch-tier-filter')?.value || 'all';
+    const statusFilter = document.getElementById('batch-status-filter')?.value || 'available';
 
     let visibleBatches = state.minibatches.filter(b => {
         if (catFilter !== 'all' && b.category !== catFilter) return false;
         if (tierFilter !== 'all' && b.complexity !== tierFilter) return false;
+
+        if (statusFilter === 'available') {
+            return b.status === 'available' || b.claimedBy === 'none';
+        } else if (statusFilter === 'mine') {
+            return b.claimedBy === state.currentMaintainer;
+        } else if (statusFilter === 'claimed') {
+            return b.claimedBy && b.claimedBy !== 'none' && b.claimedBy !== state.currentMaintainer;
+        }
         return true;
     });
 
@@ -362,12 +315,15 @@ function renderMinibatches() {
 
     container.innerHTML = visibleBatches.map(b => {
         const catBadge = getCategoryBadge(b.category);
-        const tierBadge = getComplexityBadge(b.complexity, b.prs.length);
+        const tierBadge = getComplexityBadge(b.complexity, b.prNumbers.length);
         const selectedCount = b.selectedPRs.size;
-        const totalPRs = b.prs.length;
+        const totalPRs = b.prs.length || b.prNumbers.length;
+
+        const isClaimedByMe = b.claimedBy === state.currentMaintainer;
+        const isClaimedByOther = b.claimedBy && b.claimedBy !== 'none' && !isClaimedByMe;
 
         return `
-            <div class="p-4 rounded-xl bg-cardbg border border-slate-800 hover:border-slate-700 transition shadow-sm space-y-3 flex flex-col justify-between" id="card-${b.id}">
+            <div class="p-4 rounded-xl bg-cardbg border ${isClaimedByOther ? 'border-slate-800/60 opacity-80' : isClaimedByMe ? 'border-cyan-500/50 ring-1 ring-cyan-500/30' : 'border-slate-800 hover:border-slate-700'} transition shadow-sm space-y-3 flex flex-col justify-between" id="card-${b.id}">
                 <div class="space-y-2">
                     <!-- Batch Card Header -->
                     <div class="flex items-center justify-between gap-2 flex-wrap">
@@ -375,9 +331,19 @@ function renderMinibatches() {
                             ${catBadge}
                             ${tierBadge}
                         </div>
-                        <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono flex items-center gap-1">
-                            <span>🛡️</span> 100% Conflict-Free
-                        </span>
+                        ${isClaimedByOther ? `
+                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-900 text-amber-300 border border-amber-800/80 font-mono flex items-center gap-1">
+                                <span>🔒</span> Zauzeo @${escapeHtml(b.claimedBy)}
+                            </span>
+                        ` : isClaimedByMe ? `
+                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 font-mono flex items-center gap-1">
+                                <span>👤</span> Tvoj preuzeti paket
+                            </span>
+                        ` : `
+                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono flex items-center gap-1">
+                                <span>🟢</span> Slobodan na Supabaseu
+                            </span>
+                        `}
                     </div>
 
                     <div>
@@ -386,7 +352,7 @@ function renderMinibatches() {
                             <span class="text-xs font-mono text-cyan-400">${selectedCount}/${totalPRs} odabrano</span>
                         </h3>
                         <p class="text-[11px] text-slate-400 mt-0.5">
-                            Paket sadrži ${totalPRs} PR-ova koji ne dijele nijednu datoteku. Mogu se spajati paralelno/sekvencijalno.
+                            Paket sadrži ${totalPRs} PR-ova s disjunktnim datotekama. Centralno koordinirano na Supabase poslužitelju.
                         </p>
                     </div>
 
@@ -394,11 +360,11 @@ function renderMinibatches() {
                     <div class="space-y-1.5 pt-1 max-h-56 overflow-y-auto pr-1">
                         ${b.prs.map(pr => {
                             const isChecked = b.selectedPRs.has(pr.number);
-                            const isAssigned = pr.assignedReviewer && pr.assignedReviewer !== 'none';
                             return `
                                 <div class="flex items-center justify-between p-2 rounded-lg bg-slate-900/90 border border-slate-800/80 text-xs hover:border-slate-700 transition">
                                     <div class="flex items-center gap-2 flex-1 min-w-0 pr-2">
                                         <input type="checkbox" ${isChecked ? 'checked' : ''} 
+                                               ${isClaimedByOther ? 'disabled' : ''}
                                                onchange="togglePRInBatch('${b.id}', ${pr.number}, this.checked)"
                                                class="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-cyan-500 cursor-pointer">
                                         <span class="font-mono font-bold text-cyan-400 text-[11px]">#${pr.number}</span>
@@ -408,7 +374,6 @@ function renderMinibatches() {
                                     </div>
                                     <div class="flex items-center gap-1.5 flex-shrink-0 text-[10px] font-mono">
                                         <span class="text-emerald-400">+${pr.additions}</span>/<span class="text-rose-400">-${pr.deletions}</span>
-                                        ${isAssigned ? `<span class="px-1.5 py-0.2 rounded bg-slate-800 text-cyan-300 border border-slate-700">@${escapeHtml(pr.assignedReviewer)}</span>` : ''}
                                     </div>
                                 </div>
                             `;
@@ -416,17 +381,24 @@ function renderMinibatches() {
                     </div>
                 </div>
 
-                <!-- Batch Actions -->
+                <!-- Batch Actions (With Collision Protection) -->
                 <div class="pt-3 border-t border-slate-800 flex items-center justify-between flex-wrap gap-2 text-xs">
                     <div class="flex items-center gap-1.5">
-                        <button onclick="claimSelectedInBatch('${b.id}')" 
-                                class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-white font-bold rounded-lg text-xs shadow-md shadow-cyan-600/20 transition flex items-center gap-1 cursor-pointer">
-                            <span>➕</span> Preuzmi odabrane (${selectedCount})
-                        </button>
-                        <button onclick="approveSelectedInBatch('${b.id}')" 
-                                class="px-2.5 py-1.5 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800 rounded-lg text-xs font-semibold transition cursor-pointer">
-                            ✅ Odobri (${selectedCount})
-                        </button>
+                        ${isClaimedByOther ? `
+                            <button disabled class="px-3 py-1.5 bg-slate-900 text-slate-500 border border-slate-800 rounded-lg text-xs font-semibold cursor-not-allowed">
+                                🔒 Već zaduženo
+                            </button>
+                        ` : isClaimedByMe ? `
+                            <button onclick="releaseBatch('${b.id}')" 
+                                    class="px-3 py-1.5 bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-800 rounded-lg text-xs font-semibold transition cursor-pointer">
+                                Vrati paket u opticaj
+                            </button>
+                        ` : `
+                            <button onclick="claimBatchServerSide('${b.id}')" 
+                                    class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-white font-bold rounded-lg text-xs shadow-md shadow-cyan-600/20 transition flex items-center gap-1 cursor-pointer">
+                                <span>➕</span> Preuzmi paket (${selectedCount})
+                            </button>
+                        `}
                     </div>
 
                     <button onclick="openBatchScriptModal('${b.id}')" 
@@ -449,68 +421,119 @@ function togglePRInBatch(batchId, prNumber, checked) {
     renderMinibatches();
 }
 
-async function claimSelectedInBatch(batchId) {
+// Atomic Server-Side Batch Claiming (Prevents two maintainers claiming same PRs)
+async function claimBatchServerSide(batchId) {
     const batch = state.minibatches.find(b => b.id === batchId);
     if (!batch) return;
 
+    // First check if already claimed by another maintainer on the server
     const selectedNums = Array.from(batch.selectedPRs);
     if (selectedNums.length === 0) {
         showToast('Odaberi barem jedan PR kvačicom');
         return;
     }
 
-    selectedNums.forEach(num => {
-        const pr = state.allPRs.find(p => p.number === num);
-        if (pr) {
-            pr.assignedReviewer = state.currentMaintainer;
-            pr.status = 'in-review';
+    try {
+        // 1. Atomically claim batch in public.batches table
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/batches?id=eq.${batchId}&status=eq.available`, {
+            method: 'PATCH',
+            headers: {
+                ...supabaseHeaders,
+                'Prefer': 'return=representation'
+            },
+            body: JSON.stringify({
+                status: 'claimed',
+                claimed_by: state.currentMaintainer,
+                claimed_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+            })
+        });
+
+        const updatedData = await res.json();
+        if (!Array.isArray(updatedData) || updatedData.length === 0) {
+            showToast('⚠️ Ovaj paket je upravo preuzeo drugi maintainer!');
+            refreshDataFromSupabase();
+            return;
         }
-    });
 
-    renderMyPRs();
-    renderMinibatches();
-    renderRepoTable();
+        // 2. Assign the PRs in public.prs table
+        await updateBatchPRsInSupabase(selectedNums, {
+            assigned_reviewer: state.currentMaintainer,
+            status: 'in-review'
+        });
 
-    await updateBatchPRsInSupabase(selectedNums, {
-        assigned_reviewer: state.currentMaintainer,
-        status: 'in-review'
-    });
+        batch.status = 'claimed';
+        batch.claimedBy = state.currentMaintainer;
+        batch.claimedAt = new Date().toISOString();
 
-    showToast(`Preuzeto ${selectedNums.length} PR-ova iz paketa "${batch.title}" za @${state.currentMaintainer}!`);
+        selectedNums.forEach(num => {
+            const pr = state.allPRs.find(p => p.number === num);
+            if (pr) {
+                pr.assignedReviewer = state.currentMaintainer;
+                pr.status = 'in-review';
+            }
+        });
+
+        renderMyPRs();
+        renderMinibatches();
+        renderRepoTable();
+
+        showToast(`Uspješno preuzet i zaključan paket "${batch.title}" za tebe!`);
+    } catch (e) {
+        console.error('Batch claim error:', e);
+        showToast('Greška pri preuzimanju paketa sa servera');
+    }
 }
 
-async function approveSelectedInBatch(batchId) {
+// Release a batch back to available state on Supabase
+async function releaseBatch(batchId) {
     const batch = state.minibatches.find(b => b.id === batchId);
     if (!batch) return;
 
-    const selectedNums = Array.from(batch.selectedPRs);
-    if (selectedNums.length === 0) {
-        showToast('Nema odabranih PR-ova za odobrenje');
-        return;
+    try {
+        await fetch(`${SUPABASE_URL}/rest/v1/batches?id=eq.${batchId}`, {
+            method: 'PATCH',
+            headers: {
+                ...supabaseHeaders,
+                'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify({
+                status: 'available',
+                claimed_by: 'none',
+                claimed_at: null,
+                updated_at: new Date().toISOString()
+            })
+        });
+
+        await updateBatchPRsInSupabase(batch.prNumbers, {
+            assigned_reviewer: 'none',
+            status: 'unassigned'
+        });
+
+        batch.status = 'available';
+        batch.claimedBy = 'none';
+        batch.claimedAt = null;
+
+        batch.prNumbers.forEach(num => {
+            const pr = state.allPRs.find(p => p.number === num);
+            if (pr) {
+                pr.assignedReviewer = 'none';
+                pr.status = 'unassigned';
+            }
+        });
+
+        renderMyPRs();
+        renderMinibatches();
+        renderRepoTable();
+
+        showToast(`Paket "${batch.title}" je oslobođen i vraćen na Supabase!`);
+    } catch (e) {
+        console.error('Release batch error:', e);
     }
-
-    selectedNums.forEach(num => {
-        const pr = state.allPRs.find(p => p.number === num);
-        if (pr) {
-            pr.status = 'approved';
-        }
-    });
-
-    renderMyPRs();
-    renderMinibatches();
-    renderRepoTable();
-
-    await updateBatchPRsInSupabase(selectedNums, {
-        status: 'approved'
-    });
-
-    showToast(`Odobreno ${selectedNums.length} PR-ova iz paketa!`);
 }
 
 function regenerateMinibatches() {
-    generateMinibatches();
-    renderMinibatches();
-    showToast('Regenerirani svi minibatchevi na temelju svježih PR-ova!');
+    refreshDataFromSupabase(true);
 }
 
 function getComplexityBadge(tier, count) {
@@ -542,7 +565,7 @@ function openBatchScriptModal(batchId) {
     script += `# Generirano: ${new Date().toISOString()}\n\n`;
 
     selectedNums.forEach(num => {
-        const pr = batch.prs.find(p => p.number === num);
+        const pr = state.allPRs.find(p => p.number === num);
         const prTitle = pr ? pr.title.replace(/[\r\n]+/g, ' ') : '';
         script += `# PR #${num}: ${prTitle}\n`;
         script += `gh pr merge ${num} --repo boykopovar/AnyPS5 --auto --squash --delete-branch\n\n`;
