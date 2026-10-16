@@ -5,10 +5,31 @@
 const SUPABASE_URL = 'https://nzaxslgwsygpgwqcllpi.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im56YXhzbGd3c3lncGd3cWNsbHBpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxNTU2NjksImV4cCI6MjEwNzczMTY2OX0.G_sibL-5v-wxWagMeY1eAXZXm2b5Bsh0nziN94a4moY';
 
+// Recognized Official AnyPS5 Repository Maintainers
+const KNOWN_MAINTAINERS = [
+    'boykopovar',
+    'ivica00',
+    'Honza11',
+    'Eljack',
+    'maccer_acer',
+    'JJenkx',
+    'MarcZX100',
+    'DavidSamir'
+];
+
 // Application State
 const state = {
     allPRs: [],
     minibatches: [],
+    currentUser: {
+        username: 'boykopovar',
+        name: 'Boyko Povar',
+        avatar: 'https://github.com/boykopovar.png',
+        role: 'maintainer', // 'maintainer' or 'reviewer'
+        token: ''
+    },
+    reviewerWatchlist: new Set(),
+    activeReviewerRecommendation: 'approve',
     currentMaintainer: 'boykopovar',
     activeView: 'mine', // 'mine', 'batches', or 'repo'
     myStatusFilter: 'all', // 'all', 'pending', 'approved', 'changes', 'ready'
@@ -17,6 +38,11 @@ const state = {
     supabaseConnected: false,
     lastSyncTime: null
 };
+
+// Role Check Helper
+function isCurrentUserMaintainer() {
+    return state.currentUser && state.currentUser.role === 'maintainer';
+}
 
 // Standard REST Headers for Supabase
 const supabaseHeaders = {
@@ -29,7 +55,7 @@ const supabaseHeaders = {
 document.addEventListener('DOMContentLoaded', () => {
     loadPersistentUser();
     loadLocalFallbackData();
-    setupMaintainerSelector();
+    updateUserUI();
     setupRepoFilters();
     renderMyPRs();
     renderRepoTable();
@@ -49,8 +75,26 @@ document.addEventListener('DOMContentLoaded', () => {
 // Load persistent maintainer identity
 function loadPersistentUser() {
     try {
-        const savedUser = localStorage.getItem('anyps5_current_maintainer');
-        if (savedUser) state.currentMaintainer = savedUser;
+        const savedAuth = localStorage.getItem('anyps5_auth_user');
+        if (savedAuth) {
+            state.currentUser = JSON.parse(savedAuth);
+        } else {
+            const savedLegacy = localStorage.getItem('anyps5_current_maintainer');
+            const user = savedLegacy || 'boykopovar';
+            const isM = KNOWN_MAINTAINERS.map(m => m.toLowerCase()).includes(user.toLowerCase());
+            state.currentUser = {
+                username: user,
+                name: user,
+                avatar: `https://github.com/${user}.png`,
+                role: isM ? 'maintainer' : 'reviewer',
+                token: ''
+            };
+        }
+        const savedWatchlist = localStorage.getItem('anyps5_reviewer_watchlist');
+        if (savedWatchlist) {
+            state.reviewerWatchlist = new Set(JSON.parse(savedWatchlist));
+        }
+        state.currentMaintainer = state.currentUser.username;
     } catch (e) {
         console.warn('LocalStorage error', e);
     }
@@ -58,9 +102,88 @@ function loadPersistentUser() {
 
 function savePersistentUser() {
     try {
-        localStorage.setItem('anyps5_current_maintainer', state.currentMaintainer);
+        localStorage.setItem('anyps5_auth_user', JSON.stringify(state.currentUser));
+        localStorage.setItem('anyps5_reviewer_watchlist', JSON.stringify(Array.from(state.reviewerWatchlist)));
+        localStorage.setItem('anyps5_current_maintainer', state.currentUser.username);
     } catch (e) {
         console.warn('LocalStorage error', e);
+    }
+}
+
+function updateUserUI() {
+    const u = state.currentUser;
+    const isM = isCurrentUserMaintainer();
+
+    // Header elements
+    const avatarEl = document.getElementById('header-user-avatar');
+    const userEl = document.getElementById('header-username');
+    const roleBadgeEl = document.getElementById('header-role-badge');
+    if (avatarEl) avatarEl.src = u.avatar || `https://github.com/${u.username}.png`;
+    if (userEl) userEl.innerText = `@${u.username}`;
+    if (roleBadgeEl) {
+        if (isM) {
+            roleBadgeEl.className = 'px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800 whitespace-nowrap';
+            roleBadgeEl.innerText = '🛡️ Maintainer';
+        } else {
+            roleBadgeEl.className = 'px-1.5 py-0.2 rounded text-[10px] font-bold bg-purple-950 text-purple-300 border border-purple-800 whitespace-nowrap';
+            roleBadgeEl.innerText = '🔍 Community Reviewer';
+        }
+    }
+
+    // Tab 1 (Mine vs Review Workbench)
+    const tabMineIcon = document.getElementById('tab-mine-icon');
+    const tabMineTitle = document.getElementById('tab-mine-title');
+    if (tabMineIcon) tabMineIcon.innerText = isM ? '👤' : '🔍';
+    if (tabMineTitle) tabMineTitle.innerText = isM ? 'Moji PR-ovi' : 'Moji pregledi';
+
+    // Hero Banner
+    const heroName = document.getElementById('hero-maintainer-name');
+    const heroRole = document.getElementById('hero-role-badge');
+    const heroDesc = document.getElementById('hero-maintainer-desc');
+    const heroBtnText = document.getElementById('hero-action-btn-text');
+
+    if (heroName) heroName.innerText = `@${u.username}`;
+    if (heroRole) {
+        if (isM) {
+            heroRole.className = 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800';
+            heroRole.innerText = '🛡️ Službeni Maintainer';
+        } else {
+            heroRole.className = 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-950 text-purple-300 border border-purple-800';
+            heroRole.innerText = '🔍 Community Reviewer';
+        }
+    }
+    if (heroDesc) {
+        heroDesc.innerText = isM 
+            ? 'Ovdje se nalaze PR-ovi dodijeljeni tebi za pregled i merge. Sinkronizirano sa Supabaseom u stvarnom vremenu.'
+            : 'Kao vanjski suradnik, imaš puni pristup svim AnyPS5 alatima za analizu koda, provjeru konflikata, lokalno testiranje i sastavljanje recenzija.';
+    }
+    if (heroBtnText) {
+        heroBtnText.innerText = isM ? 'Preuzmi nove PR-ove za sebe' : 'Istraži PR-ove za testiranje';
+    }
+
+    // Modal preview
+    const prevAvatar = document.getElementById('preview-avatar');
+    const prevLogin = document.getElementById('preview-login');
+    const prevRole = document.getElementById('preview-role-badge');
+    const prevDesc = document.getElementById('preview-desc');
+    const roleToggleBtn = document.getElementById('role-toggle-btn');
+
+    if (prevAvatar) prevAvatar.src = u.avatar || `https://github.com/${u.username}.png`;
+    if (prevLogin) prevLogin.innerText = `@${u.username}`;
+    if (prevRole) {
+        if (isM) {
+            prevRole.className = 'px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800';
+            prevRole.innerText = '🛡️ Maintainer';
+        } else {
+            prevRole.className = 'px-1.5 py-0.2 rounded text-[10px] font-bold bg-purple-950 text-purple-300 border border-purple-800';
+            prevRole.innerText = '🔍 Community Reviewer';
+        }
+    }
+    if (prevDesc) {
+        prevDesc.innerText = isM ? 'Službeni AnyPS5 maintainer' : 'Vanjski recenzent zajednice';
+    }
+    if (roleToggleBtn) {
+        roleToggleBtn.innerText = isM ? 'Isprobaj Reviewer pogled' : 'Isprobaj Maintainer pogled';
     }
 }
 
@@ -381,29 +504,36 @@ function renderMinibatches() {
                     </div>
                 </div>
 
-                <!-- Batch Actions (With Collision Protection) -->
+                <!-- Batch Actions (Role-Aware: Maintainer vs Community Reviewer) -->
                 <div class="pt-3 border-t border-slate-800 flex items-center justify-between flex-wrap gap-2 text-xs">
                     <div class="flex items-center gap-1.5">
-                        ${isClaimedByOther ? `
-                            <button disabled class="px-3 py-1.5 bg-slate-900 text-slate-500 border border-slate-800 rounded-lg text-xs font-semibold cursor-not-allowed">
-                                🔒 Već zaduženo
-                            </button>
-                        ` : isClaimedByMe ? `
-                            <button onclick="releaseBatch('${b.id}')" 
-                                    class="px-3 py-1.5 bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-800 rounded-lg text-xs font-semibold transition cursor-pointer">
-                                Vrati paket u opticaj
-                            </button>
-                        ` : `
-                            <button onclick="claimBatchServerSide('${b.id}')" 
-                                    class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-white font-bold rounded-lg text-xs shadow-md shadow-cyan-600/20 transition flex items-center gap-1 cursor-pointer">
-                                <span>➕</span> Preuzmi paket (${selectedCount})
+                        ${isCurrentUserMaintainer() ? (
+                            isClaimedByOther ? `
+                                <button disabled class="px-3 py-1.5 bg-slate-900 text-slate-500 border border-slate-800 rounded-lg text-xs font-semibold cursor-not-allowed">
+                                    🔒 Već zaduženo
+                                </button>
+                            ` : isClaimedByMe ? `
+                                <button onclick="releaseBatch('${b.id}')" 
+                                        class="px-3 py-1.5 bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-800 rounded-lg text-xs font-semibold transition cursor-pointer">
+                                    Vrati paket u opticaj
+                                </button>
+                            ` : `
+                                <button onclick="claimBatchServerSide('${b.id}')" 
+                                        class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-white font-bold rounded-lg text-xs shadow-md shadow-cyan-600/20 transition flex items-center gap-1 cursor-pointer">
+                                    <span>➕</span> Preuzmi paket (${selectedCount})
+                                </button>
+                            `
+                        ) : `
+                            <button onclick="addBatchToReviewWatchlist('${b.id}')" 
+                                    class="px-3 py-1.5 bg-purple-950 hover:bg-purple-900 text-purple-300 border border-purple-800 rounded-lg text-xs font-semibold transition flex items-center gap-1 cursor-pointer">
+                                <span>🔍</span> Testiraj paket (${selectedCount})
                             </button>
                         `}
                     </div>
 
                     <button onclick="openBatchScriptModal('${b.id}')" 
                             class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg text-xs font-mono transition flex items-center gap-1 cursor-pointer">
-                        <span>💻</span> CLI Skripta
+                        <span>💻</span> ${isCurrentUserMaintainer() ? 'CLI Merge' : 'CLI Test'}
                     </button>
                 </div>
             </div>
@@ -546,32 +676,75 @@ function getComplexityBadge(tier, count) {
     }
 }
 
-// Modal for Batch CLI Merge script
+// Add batch PRs to Community Reviewer Watchlist
+function addBatchToReviewWatchlist(batchId) {
+    const batch = state.minibatches.find(b => b.id === batchId);
+    if (!batch) return;
+
+    batch.prNumbers.forEach(num => state.reviewerWatchlist.add(num));
+    savePersistentUser();
+    renderMyPRs();
+    renderMinibatches();
+    showToast(`Dodano ${batch.prNumbers.length} PR-ova iz "${batch.title}" u tvoj radni pregled!`);
+}
+
+// Modal for Batch CLI script (Merge for Maintainers, Local test for Reviewers)
 function openBatchScriptModal(batchId) {
     const batch = state.minibatches.find(b => b.id === batchId);
     if (!batch) return;
 
     const modal = document.getElementById('batch-script-modal');
     const title = document.getElementById('batch-script-title');
+    const desc = document.getElementById('batch-script-desc');
+    const hint = document.getElementById('batch-script-hint');
     const textarea = document.getElementById('batch-script-textarea');
     if (!modal || !title || !textarea) return;
 
     const selectedNums = Array.from(batch.selectedPRs);
-    title.innerText = `CLI Merge: ${batch.title} (${selectedNums.length} PR-ova)`;
+    const isM = isCurrentUserMaintainer();
 
-    let script = `# AnyPS5 Minibatch CLI Merge Sequence\n`;
-    script += `# Paket: ${batch.title} (${batch.category})\n`;
-    script += `# Kompleksnost: ${batch.complexityLabel} • Disjunktne datoteke: 100% Sigurno za spajanje\n`;
-    script += `# Generirano: ${new Date().toISOString()}\n\n`;
+    if (isM) {
+        title.innerText = `CLI Merge: ${batch.title} (${selectedNums.length} PR-ova)`;
+        if (desc) desc.innerText = 'Ova skripta sekvencijalno spaja sve odabrane PR-ove iz ovog batcha. Budući da su datoteke disjunktne, spajanje prolazi 100% bez međusobnih konflikata!';
+        if (hint) hint.innerHTML = 'Kopirajte i pokrenite u terminalu s <code class="text-slate-400 font-mono">gh</code> CLI.';
 
-    selectedNums.forEach(num => {
-        const pr = state.allPRs.find(p => p.number === num);
-        const prTitle = pr ? pr.title.replace(/[\r\n]+/g, ' ') : '';
-        script += `# PR #${num}: ${prTitle}\n`;
-        script += `gh pr merge ${num} --repo boykopovar/AnyPS5 --auto --squash --delete-branch\n\n`;
-    });
+        let script = `# AnyPS5 Minibatch CLI Merge Sequence (Maintainer Mode)\n`;
+        script += `# Paket: ${batch.title} (${batch.category})\n`;
+        script += `# Kompleksnost: ${batch.complexityLabel} • Disjunktne datoteke: 100% Sigurno za spajanje\n`;
+        script += `# Generirano: ${new Date().toISOString()}\n\n`;
 
-    textarea.value = script;
+        selectedNums.forEach(num => {
+            const pr = state.allPRs.find(p => p.number === num);
+            const prTitle = pr ? pr.title.replace(/[\r\n]+/g, ' ') : '';
+            script += `# PR #${num}: ${prTitle}\n`;
+            script += `gh pr merge ${num} --repo boykopovar/AnyPS5 --auto --squash --delete-branch\n\n`;
+        });
+        textarea.value = script;
+    } else {
+        title.innerText = `CLI Testiranje Paketa: ${batch.title} (${selectedNums.length} PR-ova)`;
+        if (desc) desc.innerText = 'Kao Community Reviewer, ova skripta ti omogućuje lokalno preuzimanje i testiranje grana svih PR-ova iz ovog paketa bez diranja glavne grane:';
+        if (hint) hint.innerHTML = 'Kopirajte i pokrenite u AnyPS5 lokalnom repozitoriju za kompilaciju i testiranje.';
+
+        let script = `# AnyPS5 Minibatch Local Test Sequence (Community Reviewer Mode)\n`;
+        script += `# Paket: ${batch.title} (${batch.category})\n`;
+        script += `# Kompleksnost: ${batch.complexityLabel}\n`;
+        script += `# Generirano: ${new Date().toISOString()}\n\n`;
+        script += `# 1. Kreiraj lokalnu testnu granu za ovaj paket:\n`;
+        script += `git fetch origin\n`;
+        script += `git checkout -b test-${batch.id}\n\n`;
+
+        selectedNums.forEach(num => {
+            const pr = state.allPRs.find(p => p.number === num);
+            const prTitle = pr ? pr.title.replace(/[\r\n]+/g, ' ') : '';
+            script += `# PR #${num}: ${prTitle}\n`;
+            script += `gh pr checkout ${num}\n`;
+            script += `# Kompiliraj i pokreni testove:\n`;
+            script += `cmake --build build --config Release\n`;
+            script += `ctest --test-dir build --output-on-failure\n\n`;
+        });
+        textarea.value = script;
+    }
+
     modal.classList.remove('hidden');
     modal.classList.add('flex');
 }
@@ -602,7 +775,10 @@ function renderMyPRs() {
     const emptyState = document.getElementById('my-prs-empty');
     if (!container) return;
 
-    const myPRs = state.allPRs.filter(p => p.assignedReviewer === state.currentMaintainer);
+    const isM = isCurrentUserMaintainer();
+    const myPRs = isM 
+        ? state.allPRs.filter(p => p.assignedReviewer === state.currentMaintainer)
+        : state.allPRs.filter(p => state.reviewerWatchlist.has(p.number) || p.assignedReviewer === state.currentMaintainer);
     
     // Update badge in top bar
     const badge = document.getElementById('my-pr-count-badge');
@@ -621,10 +797,45 @@ function renderMyPRs() {
 
     if (myPRs.length === 0) {
         container.innerHTML = '';
-        emptyState.classList.remove('hidden');
+        if (emptyState) {
+            emptyState.innerHTML = isM ? `
+                <div class="text-4xl sm:text-5xl">📭</div>
+                <div class="space-y-1">
+                    <h3 class="text-base sm:text-lg font-bold text-slate-200">Trenutno nemaš dodijeljenih PR-ova</h3>
+                    <p class="text-xs sm:text-sm text-slate-400 max-w-md mx-auto">
+                        Tvoj službeni red za pregled i merge je prazan. Preuzmi nove PR-ove iz baze ili odaberi paket iz Minibatch Studija.
+                    </p>
+                </div>
+                <div class="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-2">
+                    <button onclick="quickClaimSafeBatch(5)" class="w-full sm:w-auto px-4 py-2 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800 text-xs font-semibold rounded-xl transition cursor-pointer">
+                        🟢 Preuzmi 5 sigurnih Quick-Merge PR-ova
+                    </button>
+                    <button onclick="openClaimModal()" class="w-full sm:w-auto px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold rounded-xl transition shadow-md shadow-cyan-600/30 cursor-pointer">
+                        ➕ Odaberi iz repozitorija...
+                    </button>
+                </div>
+            ` : `
+                <div class="text-4xl sm:text-5xl">🔍</div>
+                <div class="space-y-1">
+                    <h3 class="text-base sm:text-lg font-bold text-slate-200">Tvoj radni pregled je prazan</h3>
+                    <p class="text-xs sm:text-sm text-slate-400 max-w-md mx-auto">
+                        Kao Community Reviewer, odaberi pakete iz Minibatch Studija ili istraži Cijeli repozitorij kako bi lokalno testirao i recenzirao PR-ove.
+                    </p>
+                </div>
+                <div class="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-2">
+                    <button onclick="addSafeQuickBatchToReviewer()" class="w-full sm:w-auto px-4 py-2 bg-purple-950 hover:bg-purple-900 text-purple-300 border border-purple-800 text-xs font-semibold rounded-xl transition cursor-pointer">
+                        🟢 Dodaj 5 jednostavnih PR-ova za testiranje
+                    </button>
+                    <button onclick="switchMainView('batches')" class="w-full sm:w-auto px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold rounded-xl transition shadow-md shadow-cyan-600/30 cursor-pointer">
+                        ⚡ Istraži Minibatch Studio
+                    </button>
+                </div>
+            `;
+            emptyState.classList.remove('hidden');
+        }
         return;
     } else {
-        emptyState.classList.add('hidden');
+        if (emptyState) emptyState.classList.add('hidden');
     }
 
     if (visiblePRs.length === 0) {
@@ -693,20 +904,32 @@ function renderMyPRs() {
                         </button>
                     </div>
 
-                    <div class="flex items-center gap-1.5">
-                        <select onchange="quickUpdateMyStatus(${pr.number}, this.value)" 
-                                class="bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-cyan-500 cursor-pointer">
-                            <option value="in-review" ${pr.status === 'in-review' || pr.status === 'unassigned' ? 'selected' : ''}>🔍 Čeka pregled</option>
-                            <option value="approved" ${pr.status === 'approved' ? 'selected' : ''}>✅ Odobreno</option>
-                            <option value="changes" ${pr.status === 'changes' ? 'selected' : ''}>⚠️ Zatraži izmjene</option>
-                            <option value="conflict" ${pr.status === 'conflict' ? 'selected' : ''}>🚫 Konflikt</option>
-                            <option value="ready" ${pr.status === 'ready' ? 'selected' : ''}>🚀 Za merge</option>
-                        </select>
-                        <button onclick="unassignPR(${pr.number})" title="Ukloni iz mog reda" 
-                                class="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-slate-800 transition text-xs cursor-pointer">
-                            ✕
-                        </button>
-                    </div>
+                    ${isM ? `
+                        <div class="flex items-center gap-1.5">
+                            <select onchange="quickUpdateMyStatus(${pr.number}, this.value)" 
+                                    class="bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-cyan-500 cursor-pointer">
+                                <option value="in-review" ${pr.status === 'in-review' || pr.status === 'unassigned' ? 'selected' : ''}>🔍 Čeka pregled</option>
+                                <option value="approved" ${pr.status === 'approved' ? 'selected' : ''}>✅ Odobreno</option>
+                                <option value="changes" ${pr.status === 'changes' ? 'selected' : ''}>⚠️ Zatraži izmjene</option>
+                                <option value="conflict" ${pr.status === 'conflict' ? 'selected' : ''}>🚫 Konflikt</option>
+                                <option value="ready" ${pr.status === 'ready' ? 'selected' : ''}>🚀 Za merge</option>
+                            </select>
+                            <button onclick="unassignPR(${pr.number})" title="Ukloni iz mog reda" 
+                                    class="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-slate-800 transition text-xs cursor-pointer">
+                                ✕
+                            </button>
+                        </div>
+                    ` : `
+                        <div class="flex items-center gap-1.5">
+                            <a href="${pr.url}/files" target="_blank" class="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-slate-700 rounded-lg text-xs font-semibold transition flex items-center gap-1">
+                                <span>🐙</span> GitHub Files &nearr;
+                            </a>
+                            <button onclick="toggleWatchlistSingle(${pr.number})" title="Ukloni iz mog radnog pregleda" 
+                                    class="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-slate-800 transition text-xs cursor-pointer">
+                                ✕
+                            </button>
+                        </div>
+                    `}
                 </div>
             </div>
         `;
@@ -930,6 +1153,8 @@ function openInspectModal(prNumber) {
     const modal = document.getElementById('inspect-modal');
     if (!modal) return;
 
+    const isM = isCurrentUserMaintainer();
+
     // Header info
     document.getElementById('inspect-pr-num').innerText = `#${pr.number}`;
     document.getElementById('inspect-pr-title').innerText = pr.title;
@@ -938,6 +1163,38 @@ function openInspectModal(prNumber) {
     document.getElementById('inspect-pr-cat').innerHTML = getCategoryBadge(pr.category);
     document.getElementById('inspect-pr-risk').innerHTML = getRiskBadge(pr.riskLevel);
     document.getElementById('inspect-github-link').href = pr.url;
+
+    // Role Indicator Chip in Inspect Modal
+    const roleChip = document.getElementById('inspect-user-role-chip');
+    const tool4Title = document.getElementById('inspect-tool4-title');
+    const maintainerVerdictSec = document.getElementById('maintainer-verdict-section');
+    const reviewerRecSec = document.getElementById('reviewer-recommendation-section');
+    const maintainerFooterBtns = document.getElementById('inspect-footer-maintainer-btns');
+    const reviewerFooterBtns = document.getElementById('inspect-footer-reviewer-btns');
+    const submitReviewBtn = document.getElementById('inspect-submit-review-btn');
+
+    if (roleChip) {
+        roleChip.className = isM 
+            ? 'text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-950 text-emerald-300 border border-emerald-800'
+            : 'text-[10px] px-2 py-0.5 rounded-full font-bold bg-purple-950 text-purple-300 border border-purple-800';
+        roleChip.innerText = isM ? '🛡️ Maintainer način' : '🔍 Reviewer način';
+    }
+
+    if (tool4Title) {
+        tool4Title.innerText = isM ? 'Alat 4: Službena ocjena i zabilješke maintainera' : 'Alat 4: Preporuka recenzenta & Markdown izvoz za GitHub';
+    }
+
+    if (maintainerVerdictSec) maintainerVerdictSec.classList.toggle('hidden', !isM);
+    if (reviewerRecSec) reviewerRecSec.classList.toggle('hidden', isM);
+    if (maintainerFooterBtns) maintainerFooterBtns.classList.toggle('hidden', !isM);
+    if (reviewerFooterBtns) reviewerFooterBtns.classList.toggle('hidden', isM);
+
+    if (submitReviewBtn) {
+        submitReviewBtn.href = `${pr.url}/files`;
+    }
+
+    updateInspectModalWatchlistBtn();
+    setReviewerRecommendation('approve');
 
     // ALAT 1: Hotspots & Conflicts
     const conflictBadge = document.getElementById('inspect-conflict-status');
@@ -970,7 +1227,9 @@ function openInspectModal(prNumber) {
     // ALAT 2: CLI Commands
     document.getElementById('inspect-cmd-checkout').innerText = `gh pr checkout ${pr.number}`;
     document.getElementById('inspect-cmd-diff').innerText = `gh pr diff ${pr.number}`;
-    document.getElementById('inspect-cmd-merge').innerText = `gh pr merge ${pr.number} --squash --delete-branch`;
+    document.getElementById('inspect-cmd-merge').innerText = isM 
+        ? `gh pr merge ${pr.number} --squash --delete-branch`
+        : `gh pr checkout ${pr.number} && cmake --build build --config Release`;
 
     // ALAT 3: Checklist
     const chk = pr.checklist || {};
@@ -1006,6 +1265,80 @@ function closeInspectModal() {
         modal.classList.remove('flex');
     }
     state.activeInspectPR = null;
+}
+
+function updateInspectModalWatchlistBtn() {
+    const btn = document.getElementById('inspect-toggle-watchlist-btn');
+    if (!btn || !state.activeInspectPR) return;
+    const isWatched = state.reviewerWatchlist.has(state.activeInspectPR.number);
+    btn.innerText = isWatched ? '✓ Ukloni iz mojih pregleda' : '+ Dodaj u moje preglede';
+    btn.className = isWatched 
+        ? 'px-3 py-1.5 bg-rose-950/60 hover:bg-rose-900 text-rose-300 border border-rose-800/80 rounded-lg text-xs font-semibold transition cursor-pointer'
+        : 'px-3 py-1.5 bg-purple-950/60 hover:bg-purple-900 text-purple-300 border border-purple-800/80 rounded-lg text-xs font-semibold transition cursor-pointer';
+}
+
+function toggleCurrentPRWatchlist() {
+    if (!state.activeInspectPR) return;
+    const num = state.activeInspectPR.number;
+    toggleWatchlistSingle(num);
+    updateInspectModalWatchlistBtn();
+}
+
+function toggleWatchlistSingle(num) {
+    if (state.reviewerWatchlist.has(num)) {
+        state.reviewerWatchlist.delete(num);
+        showToast(`PR #${num} uklonjen iz tvog radnog pregleda`);
+    } else {
+        state.reviewerWatchlist.add(num);
+        showToast(`PR #${num} dodan u tvoj radni pregled`);
+    }
+    savePersistentUser();
+    renderMyPRs();
+}
+
+function setReviewerRecommendation(rec) {
+    state.activeReviewerRecommendation = rec;
+    ['approve', 'changes', 'issue'].forEach(r => {
+        const btn = document.getElementById(`rec-btn-${r}`);
+        if (btn) {
+            if (r === rec) {
+                btn.className = 'py-1.5 px-2 rounded-lg bg-cyan-950 border border-cyan-500 text-cyan-200 font-bold transition text-center text-[11px] shadow-sm cursor-pointer';
+            } else {
+                btn.className = 'py-1.5 px-2 rounded-lg bg-slate-950 hover:bg-slate-900 border border-slate-800 text-slate-400 font-semibold transition text-center text-[11px] cursor-pointer';
+            }
+        }
+    });
+}
+
+function copyGeneratedMarkdownReview() {
+    if (!state.activeInspectPR) return;
+    const pr = state.activeInspectPR;
+    const chk = getChecklistState();
+    const notes = document.getElementById('inspect-notes-field')?.value || '';
+    const rec = state.activeReviewerRecommendation || 'approve';
+
+    const recLabels = {
+        'approve': '✅ Preporučujem spajanje (LGTM)',
+        'changes': '⚠️ Predlažem dorade prije spajanja',
+        'issue': '🚫 Prijavljena greška / problem u kodu'
+    };
+
+    let md = `### 🔍 AnyPS5 Recenzija Koda\n\n`;
+    md += `**Recenzent:** @${state.currentUser.username} (${isCurrentUserMaintainer() ? '🛡️ Maintainer' : '🔍 Community Reviewer'})\n`;
+    md += `**Preporuka:** ${recLabels[rec] || recLabels.approve}\n\n`;
+    md += `#### 📋 Provjera AnyPS5 standarda kvalitete:\n`;
+    md += `- [${chk.build ? 'x' : ' '}] Kompilacija prolazi (CMakeLists / Clang / MSVC)\n`;
+    md += `- [${chk.types ? 'x' : ' '}] Provjereni SCE firmware potpisi i tipovi struktura\n`;
+    md += `- [${chk.locks ? 'x' : ' '}] Nema race conditiona / dretveni lockovi se ispravno oslobađaju\n`;
+    md += `- [${chk.tests ? 'x' : ' '}] Uključeni testovi i provjera regresije\n\n`;
+
+    if (notes.trim()) {
+        md += `#### 📝 Zabilješke s testiranja:\n${notes.trim()}\n\n`;
+    }
+
+    md += `*Generirano putem [AnyPS5 Maintainer Workspace](https://ivica00.github.io/anyps5-maintainer-hub/)*\n`;
+
+    copyTextToClipboard(md, 'Kopirana recenzija u Markdown formatu!');
 }
 
 async function setInspectStatus(newStatus) {
@@ -1095,8 +1428,12 @@ function renderRepoTable() {
         return true;
     });
 
+    const isM = isCurrentUserMaintainer();
+
     tbody.innerHTML = list.slice(0, 50).map(pr => {
         const isAssignedToMe = pr.assignedReviewer === state.currentMaintainer;
+        const isWatched = state.reviewerWatchlist.has(pr.number);
+
         return `
             <tr class="hover:bg-slate-800/50 transition">
                 <td class="px-4 py-2.5 font-mono font-bold text-cyan-400">#${pr.number}</td>
@@ -1110,14 +1447,26 @@ function renderRepoTable() {
                     ${isAssignedToMe ? '<span class="text-cyan-400 font-bold">👤 Ti (@' + state.currentMaintainer + ')</span>' : (pr.assignedReviewer !== 'none' ? '@' + pr.assignedReviewer : '<span class="text-slate-500">Nitko</span>')}
                 </td>
                 <td class="px-4 py-2.5 text-right whitespace-nowrap">
-                    ${isAssignedToMe ? `
-                        <button onclick="openInspectModal(${pr.number})" class="px-2 py-1 bg-cyan-600 text-white rounded font-bold text-[11px] cursor-pointer">
-                            Ispitaj
-                        </button>
-                    ` : `
-                        <button onclick="assignPR(${pr.number}, state.currentMaintainer)" class="px-2 py-1 bg-slate-800 hover:bg-cyan-600 hover:text-white text-cyan-400 border border-slate-700 rounded text-[11px] font-semibold transition cursor-pointer">
-                            + Preuzmi
-                        </button>
+                    ${isM ? (
+                        isAssignedToMe ? `
+                            <button onclick="openInspectModal(${pr.number})" class="px-2.5 py-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded font-bold text-[11px] cursor-pointer shadow-sm">
+                                Ispitaj
+                            </button>
+                        ` : `
+                            <button onclick="assignPR(${pr.number}, state.currentMaintainer)" class="px-2.5 py-1 bg-slate-800 hover:bg-cyan-600 hover:text-white text-cyan-400 border border-slate-700 rounded text-[11px] font-semibold transition cursor-pointer">
+                                + Preuzmi
+                            </button>
+                        `
+                    ) : `
+                        <div class="inline-flex items-center gap-1.5">
+                            <button onclick="openInspectModal(${pr.number})" class="px-2 py-1 bg-purple-950 hover:bg-purple-900 text-purple-300 border border-purple-800 rounded font-semibold text-[11px] transition cursor-pointer">
+                                🔍 Pregledaj
+                            </button>
+                            <button onclick="toggleWatchlistSingle(${pr.number})" title="${isWatched ? 'Ukloni iz mojih pregleda' : 'Dodaj u moje preglede'}"
+                                    class="px-2 py-1 ${isWatched ? 'bg-rose-950 text-rose-300 border-rose-800' : 'bg-slate-800 text-slate-300 border-slate-700 hover:text-white'} border rounded text-[11px] font-semibold transition cursor-pointer">
+                                ${isWatched ? '✓ Spremljeno' : '+ Prati'}
+                            </button>
+                        </div>
                     `}
                 </td>
             </tr>
@@ -1125,61 +1474,157 @@ function renderRepoTable() {
     }).join('');
 }
 
-// Setup maintainer selection
-function setupMaintainerSelector() {
-    const select = document.getElementById('current-maintainer-select');
-    if (!select) return;
+// ==========================================
+// GITHUB AUTHENTICATION & ROLE MANAGEMENT
+// ==========================================
 
-    let exists = false;
-    for (let opt of select.options) {
-        if (opt.value === state.currentMaintainer) {
-            exists = true;
-            break;
-        }
-    }
-    if (!exists && state.currentMaintainer !== 'custom') {
-        const opt = document.createElement('option');
-        opt.value = state.currentMaintainer;
-        opt.innerText = `@${state.currentMaintainer}`;
-        select.insertBefore(opt, select.lastElementChild);
-    }
-
-    select.value = state.currentMaintainer;
-    updateMaintainerLabels();
-
-    select.addEventListener('change', (e) => {
-        if (e.target.value === 'custom') {
-            const customName = prompt('Unesi svoje GitHub korisničko ime:');
-            if (customName && customName.trim()) {
-                const clean = customName.trim().replace(/^@/, '');
-                state.currentMaintainer = clean;
-                const newOpt = document.createElement('option');
-                newOpt.value = clean;
-                newOpt.innerText = `@${clean}`;
-                select.insertBefore(newOpt, select.lastElementChild);
-                select.value = clean;
-            } else {
-                select.value = state.currentMaintainer;
-                return;
-            }
-        } else {
-            state.currentMaintainer = e.target.value;
-        }
-        savePersistentUser();
-        updateMaintainerLabels();
-        renderMyPRs();
-        renderMinibatches();
-        renderRepoTable();
-        showToast(`Prijavljen kao @${state.currentMaintainer}`);
-    });
+function openGitHubLoginModal() {
+    const modal = document.getElementById('github-login-modal');
+    if (!modal) return;
+    const input = document.getElementById('github-username-input');
+    if (input) input.value = state.currentUser.username;
+    updateUserUI();
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
 }
 
-function updateMaintainerLabels() {
-    const heroName = document.getElementById('hero-maintainer-name');
-    if (heroName) heroName.innerText = `@${state.currentMaintainer}`;
+function closeGitHubLoginModal() {
+    const modal = document.getElementById('github-login-modal');
+    if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+    }
+}
 
-    const claimTag = document.getElementById('claim-user-tag');
-    if (claimTag) claimTag.innerText = `@${state.currentMaintainer}`;
+async function handleGitHubUsernameLogin() {
+    const input = document.getElementById('github-username-input');
+    const tokenInput = document.getElementById('github-token-input');
+    const username = input?.value || '';
+    const token = tokenInput?.value || '';
+    await loginWithGitHub(username, token);
+    closeGitHubLoginModal();
+}
+
+function quickSelectUser(username) {
+    if (username === 'community_user') {
+        loginWithGitHub('AnyPS5-Contributor', '', 'reviewer');
+    } else {
+        loginWithGitHub(username);
+    }
+    closeGitHubLoginModal();
+}
+
+function toggleRolePreview() {
+    state.currentUser.role = state.currentUser.role === 'maintainer' ? 'reviewer' : 'maintainer';
+    savePersistentUser();
+    updateUserUI();
+    renderMyPRs();
+    renderMinibatches();
+    renderRepoTable();
+    showToast(`Prebačeno na: ${state.currentUser.role === 'maintainer' ? '🛡️ Službeni Maintainer način' : '🔍 Community Reviewer način'}`);
+}
+
+function handleLogout() {
+    loginWithGitHub('AnyPS5-Guest', '', 'reviewer');
+    closeGitHubLoginModal();
+    showToast('Odjavljen');
+}
+
+async function loginWithGitHub(username, token = '', forcedRole = null) {
+    const cleanUser = username.trim().replace(/^@/, '');
+    if (!cleanUser) {
+        showToast('Unesi valjano GitHub korisničko ime');
+        return;
+    }
+
+    let name = cleanUser;
+    let avatar = `https://github.com/${cleanUser}.png`;
+    let isMaintainer = forcedRole ? (forcedRole === 'maintainer') : KNOWN_MAINTAINERS.map(m => m.toLowerCase()).includes(cleanUser.toLowerCase());
+
+    try {
+        const res = await fetch(`https://api.github.com/users/${cleanUser}`);
+        if (res.ok) {
+            const data = await res.json();
+            if (data.avatar_url) avatar = data.avatar_url;
+            if (data.name) name = data.name;
+        }
+    } catch (e) {
+        console.warn('GitHub user fetch error:', e);
+    }
+
+    if (token) {
+        try {
+            const repoRes = await fetch('https://api.github.com/repos/boykopovar/AnyPS5', {
+                headers: {
+                    'Authorization': `token ${token}`,
+                    'User-Agent': 'AnyPS5-Hub'
+                }
+            });
+            if (repoRes.ok) {
+                const repoData = await repoRes.json();
+                if (repoData.permissions && (repoData.permissions.push || repoData.permissions.maintain || repoData.permissions.admin)) {
+                    isMaintainer = true;
+                }
+            }
+        } catch (e) {
+            console.warn('GitHub token check error:', e);
+        }
+    }
+
+    state.currentUser = {
+        username: cleanUser,
+        name: name,
+        avatar: avatar,
+        role: isMaintainer ? 'maintainer' : 'reviewer',
+        token: token
+    };
+    state.currentMaintainer = cleanUser;
+
+    savePersistentUser();
+    updateUserUI();
+    renderMyPRs();
+    renderMinibatches();
+    renderRepoTable();
+
+    showToast(isMaintainer 
+        ? `Prijavljen kao Maintainer: @${cleanUser} (Puni pristup)` 
+        : `Prijavljen kao Community Reviewer: @${cleanUser} (Alati za recenziju)`);
+}
+
+function handleHeroAction() {
+    if (isCurrentUserMaintainer()) {
+        openClaimModal();
+    } else {
+        switchMainView('batches');
+        showToast('Istraži pakete i odaberi PR-ove za lokalno testiranje!');
+    }
+}
+
+function addSafeQuickBatchToReviewer(count = 5) {
+    const safePRs = state.allPRs.filter(p => p.riskLevel === 'low').slice(0, count);
+    safePRs.forEach(p => state.reviewerWatchlist.add(p.number));
+    savePersistentUser();
+    renderMyPRs();
+    showToast(`Dodano ${safePRs.length} jednostavnih PR-ova u tvoj radni pregled!`);
+}
+
+async function quickClaimSafeBatch(count = 5) {
+    const safePRs = state.allPRs.filter(p => p.assignedReviewer !== state.currentMaintainer && p.riskLevel === 'low').slice(0, count);
+    if (safePRs.length === 0) {
+        showToast('Nema slobodnih Quick-Merge PR-ova');
+        return;
+    }
+    const nums = safePRs.map(p => p.number);
+    nums.forEach(n => assignPR(n, state.currentMaintainer, false));
+    renderMyPRs();
+    renderMinibatches();
+    renderRepoTable();
+
+    await updateBatchPRsInSupabase(nums, {
+        assigned_reviewer: state.currentMaintainer,
+        status: 'in-review'
+    });
+    showToast(`Preuzeto ${nums.length} Quick-Merge PR-ova za @${state.currentMaintainer}!`);
 }
 
 // Switch between "Moji PR-ovi", "Minibatches", and "Cijeli repozitorij"
