@@ -324,7 +324,7 @@ async function refreshDataSnapshot(showToastAlert = false) {
         state.lastSyncTime = new Date();
 
         const timeStr = state.lastSyncTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        if (statusText) statusText.innerText = `🟢 ${state.allPRs.length} PR (${timeStr})`;
+        if (statusText) statusText.innerText = `🟢 ${getOpenPRs().length} open PR (${timeStr})`;
         if (pill) {
             pill.className = "text-[10px] px-2.5 py-1 rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-800 font-mono flex items-center gap-1.5 transition";
         }
@@ -377,6 +377,12 @@ function scheduleRealtimeRefresh() {
         await refreshDataFromSupabase();
     }, 300);
 }
+
+function isOpenPR(pr) {
+    // Local fallback records predate githubState; live rows always include it.
+    return pr.githubState === 'open' || pr.githubState === undefined;
+}
+function getOpenPRs() { return state.allPRs.filter(isOpenPR); }
 
 function isBatchAvailable(batch) {
     return batch.status === 'available' && batch.claimedBy === 'none'
@@ -1496,7 +1502,7 @@ function openInspectModal(prNumber) {
         conflictDesc.innerText = 'This PR modifies files that are simultaneously touched by multiple open PRs. Watch out for merge conflicts!';
         
         hotspotFilesContainer.innerHTML = pr.hotspots.map(h => {
-            const competing = state.allPRs.filter(other => other.number !== pr.number && other.files && other.files.includes(h)).length;
+            const competing = state.allPRs.filter(other => isOpenPR(other) && other.number !== pr.number && other.files && other.files.includes(h)).length;
             return `
                 <div class="flex items-center justify-between p-2 rounded bg-rose-950/40 border border-rose-900/60 font-mono text-[11px] text-rose-200">
                     <span class="truncate">${escapeHtml(h)}</span>
@@ -1701,8 +1707,8 @@ function renderRepoTable() {
     const repoTotalBadge = document.getElementById('repo-total-count-badge');
     if (!tbody) return;
 
-    if (countTitle) countTitle.innerText = state.allPRs.length;
-    if (repoTotalBadge) repoTotalBadge.innerText = state.allPRs.length;
+    if (countTitle) countTitle.innerText = getOpenPRs().length;
+    if (repoTotalBadge) repoTotalBadge.innerText = getOpenPRs().length;
 
     const q = (document.getElementById('repo-search')?.value || '').toLowerCase().trim();
     const cat = document.getElementById('repo-cat-filter')?.value || 'all';
@@ -2294,7 +2300,8 @@ function renderSidebarStats() {
     const barMed = document.getElementById('sidebar-bar-med');
     const barHigh = document.getElementById('sidebar-bar-high');
 
-    const total = state.allPRs.length || 0;
+    const openPRs = getOpenPRs();
+    const total = openPRs.length;
     if (totalEl) totalEl.innerText = total;
 
     let lowCount = 0;
@@ -2303,7 +2310,7 @@ function renderSidebarStats() {
 
     const fileMap = {};
 
-    state.allPRs.forEach(pr => {
+    openPRs.forEach(pr => {
         if (pr.riskLevel === 'low') lowCount++;
         else if (pr.riskLevel === 'high') highCount++;
         else medCount++;
@@ -2333,7 +2340,7 @@ function renderSidebarStats() {
     const maintainersListEl = document.getElementById('sidebar-maintainers-list');
     if (maintainersListEl) {
         maintainersListEl.innerHTML = KNOWN_MAINTAINERS.map(m => {
-            const assignedCount = state.allPRs.filter(p => p.assignedReviewer === m).length;
+            const assignedCount = openPRs.filter(p => p.assignedReviewer === m).length;
             const isMe = m === state.currentMaintainer;
             return `
                 <div class="flex items-center justify-between p-2 rounded-xl ${isMe ? 'bg-blue-950/50 border border-blue-500/50 shadow-sm' : 'bg-slate-900/60 border border-slate-800/80'} text-xs transition">

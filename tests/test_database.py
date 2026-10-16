@@ -19,9 +19,10 @@ class DatabaseTests(unittest.TestCase):
         try:
             conn.run('BEGIN')
             conn.run("SET LOCAL lock_timeout = '5s'")
-            applied = conn.run("SELECT to_regclass('public.hub_schema_migrations')")[0][0]
-            if not applied:
-                for path in sorted(Path('supabase/migrations').glob('*.sql')):
+            tracking = conn.run("SELECT to_regclass('public.hub_schema_migrations')")[0][0]
+            applied = {row[0] for row in conn.run('SELECT name FROM public.hub_schema_migrations')} if tracking else set()
+            for path in sorted(Path('supabase/migrations').glob('*.sql')):
+                if path.name not in applied:
                     sql = path.read_text(encoding='utf-8-sig').replace('BEGIN;', '', 1)
                     conn.run(sql.rsplit('COMMIT;', 1)[0])
             conn.run(f"INSERT INTO auth.users(id) VALUES ('{owner}'), ('{stranger}')")
@@ -79,8 +80,15 @@ class DatabaseTests(unittest.TestCase):
                      states=json.dumps([{'number': -100001, 'github_state': 'merged'}]))
             row = conn.run('SELECT notes,assigned_user_id::text,github_state,status FROM public.prs WHERE number=-100001')[0]
             self.assertEqual(row, ['keep updated notes', owner, 'merged', 'in-review'])
+            # A merged PR's historical assignment must not reserve its files forever.
+            conn.run("INSERT INTO public.prs(number,title,author,files,github_state) VALUES "
+                     "(-100002,'new fixture','fixture','[\"rollback-unique-file.cpp\"]','open')")
+            conn.run("INSERT INTO public.batches(id,title,category,complexity,complexity_label,pr_count,pr_numbers) "
+                     "VALUES ('rollback-second','test','test','low','low',1,ARRAY[-100002])")
             conn.run(f"SELECT set_config('request.jwt.claim.sub','{owner}',true)")
             conn.run('SET LOCAL ROLE authenticated')
+            conn.run("SELECT public.claim_batch('rollback-second')")
+            conn.run("SELECT public.release_batch('rollback-second')")
             conn.run("SELECT public.release_batch('rollback-fixture')")
             reject("SELECT public.claim_batch('rollback-fixture')")
             conn.run('RESET ROLE')

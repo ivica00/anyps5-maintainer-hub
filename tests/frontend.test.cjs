@@ -47,5 +47,7 @@ vm.runInContext(fs.readFileSync('app.js', 'utf8'), context);
     vm.runInContext(`state.minibatches = [{status:'available',claimedBy:'none',prNumbers:[42],
         prs:[{githubState:'closed',files:['one.cpp']}]}]`,context);
     assert.equal(vm.runInContext('isBatchAvailable(state.minibatches[0])',context),false);
+    vm.runInContext("state.allPRs = [{githubState:'open'},{githubState:'merged'},{githubState:'closed'}]",context);
+    assert.equal(vm.runInContext('getOpenPRs().length',context),1);
     console.log('PASS: session authorization, rejected writes, forged identity cleanup, inspection save success/failure, capped pagination, closed batch exclusion');
 })().catch(error => { console.error(error); process.exitCode=1; });
