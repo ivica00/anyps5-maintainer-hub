@@ -11,11 +11,13 @@ const KNOWN_MAINTAINERS = [
     'ivica00',
     'Honza11',
     'Eljack',
-    'maccer_acer',
     'JJenkx',
     'MarcZX100',
     'DavidSamir'
 ];
+
+// Offline & Error-Safe SVG Avatar Fallback
+const DEFAULT_AVATAR_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2300b4ff'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z'/%3E%3C/svg%3E";
 
 // Application State
 const state = {
@@ -64,8 +66,12 @@ document.addEventListener('DOMContentLoaded', () => {
     initSupabaseAuth();
     updateUserUI();
     setupRepoFilters();
-    renderMyPRs();
-    renderRepoTable();
+    setupModalBackdrops();
+
+    // Default to 'batches' for guests/reviewers, or 'mine' for official maintainers
+    const initialView = (state.currentUser && isCurrentUserMaintainer()) ? 'mine' : 'batches';
+    switchMainView(initialView);
+
     renderSidebarStats();
 
     // 1. Initial direct REST fetch from Supabase (PRs & Batches)
@@ -540,13 +546,34 @@ function renderMinibatches() {
     }
 
     // Set correct container classes depending on view mode
+    const loadMoreHtml = filtered.length > visibleBatches.length ? `
+        <div class="col-span-full pt-4 pb-2 text-center">
+            <button onclick="loadMoreBatches()" class="px-5 py-2.5 rounded-xl bg-slate-900/95 hover:bg-slate-800 text-cyan-300 border border-slate-700 hover:border-cyan-500 font-bold text-xs shadow-md transition flex items-center justify-center gap-2 mx-auto cursor-pointer">
+                <span>⚡</span>
+                <span>Load More Batches (${visibleBatches.length} of ${filtered.length})</span>
+            </button>
+        </div>
+    ` : '';
+
     if (state.batchViewMode === 'compact') {
         container.className = 'space-y-1.5';
-        container.innerHTML = visibleBatches.map(b => renderCompactBatchRow(b)).join('');
+        container.innerHTML = visibleBatches.map(b => renderCompactBatchRow(b)).join('') + loadMoreHtml;
     } else {
         container.className = 'grid grid-cols-1 lg:grid-cols-2 gap-4';
-        container.innerHTML = visibleBatches.map(b => renderGridBatchCard(b)).join('');
+        container.innerHTML = visibleBatches.map(b => renderGridBatchCard(b)).join('') + loadMoreHtml;
     }
+}
+
+function loadMoreBatches() {
+    const filterEl = document.getElementById('batch-limit-filter');
+    if (!filterEl) return;
+    const current = filterEl.value;
+    if (current === '50') {
+        filterEl.value = '100';
+    } else {
+        filterEl.value = 'all';
+    }
+    renderMinibatches();
 }
 
 // High-Density Compact Batch Row (Perfect for scanning 50+ batches on 1-2 screen heights)
@@ -610,9 +637,9 @@ function renderCompactBatchRow(b) {
     `;
 
     return `
-        <div class="rounded-xl bg-cardbg border ${isClaimedByOther ? 'border-slate-800/60 opacity-80' : isClaimedByMe ? 'border-cyan-500/50 ring-1 ring-cyan-500/30' : 'border-slate-800 hover:border-slate-700'} transition shadow-sm p-2 sm:p-2.5" id="batch-row-${b.id}">
+        <div class="rounded-xl bg-cardbg border ${isClaimedByOther ? 'border-slate-800/60 opacity-80' : isClaimedByMe ? 'border-cyan-500/50 ring-1 ring-cyan-500/30' : 'border-slate-800 hover:border-slate-700'} transition shadow-sm p-2 sm:p-2.5 overflow-hidden max-w-full" id="batch-row-${b.id}">
             <!-- Main Dense Horizontal Bar -->
-            <div class="flex items-center justify-between gap-2 flex-wrap lg:flex-nowrap">
+            <div class="flex items-center justify-between gap-2 flex-wrap lg:flex-nowrap max-w-full">
                 <!-- Left: Expander, Category, Title, Complexity -->
                 <div class="flex items-center gap-2 min-w-0 flex-1">
                     <button onclick="toggleBatchExpand('${b.id}')" class="p-1 rounded text-slate-400 hover:text-cyan-300 hover:bg-slate-800 transition text-[11px] flex-shrink-0 cursor-pointer" title="Show/hide individual PRs">
@@ -626,7 +653,7 @@ function renderCompactBatchRow(b) {
                 </div>
 
                 <!-- Middle: Aggregate Diff, Disjoint Files, Clickable PR Pills -->
-                <div class="flex items-center gap-2 text-xs font-mono flex-shrink-0">
+                <div class="flex items-center gap-2 text-xs font-mono flex-wrap sm:flex-nowrap min-w-0 max-w-full">
                     <div class="text-[11px] whitespace-nowrap">
                         <span class="text-emerald-400 font-bold">+${totalAdds}</span>/<span class="text-rose-400 font-bold">-${totalDels}</span>
                     </div>
@@ -634,19 +661,19 @@ function renderCompactBatchRow(b) {
                         📁 ${uniqueFiles.size} files
                     </span>
 
-                    <!-- Clickable PR pills with hover titles -->
-                    <div class="flex items-center gap-1 flex-wrap">
-                        ${b.prs.slice(0, 6).map(pr => `
+                    <!-- Clickable PR pills with hover titles (Responsive wrap) -->
+                    <div class="flex items-center gap-1 flex-wrap max-w-full">
+                        ${b.prs.slice(0, 4).map(pr => `
                             <span onclick="openInspectModal(${pr.number})" title="${escapeHtml(pr.title)} (${pr.author})" class="px-1.5 py-0.5 rounded bg-slate-900/90 hover:bg-cyan-950 text-cyan-400 border border-slate-800 hover:border-cyan-700 text-[10px] font-bold cursor-pointer transition whitespace-nowrap">
                                 #${pr.number}
                             </span>
                         `).join('')}
-                        ${b.prs.length > 6 ? `<span class="text-[10px] text-slate-500 font-mono cursor-pointer" onclick="toggleBatchExpand('${b.id}')">+${b.prs.length - 6} more</span>` : ''}
+                        ${b.prs.length > 4 ? `<span class="text-[10px] text-slate-500 font-mono cursor-pointer" onclick="toggleBatchExpand('${b.id}')">+${b.prs.length - 4} more</span>` : ''}
                     </div>
                 </div>
 
                 <!-- Right: Status + 1-Click AI Prompt + CLI + Claim -->
-                <div class="flex items-center gap-1.5 flex-shrink-0 ml-auto lg:ml-0">
+                <div class="flex items-center gap-1.5 flex-wrap sm:flex-nowrap ml-auto lg:ml-0 flex-shrink-0">
                     ${statusPill}
                     
                     <!-- 1-Click Deterministic AI Prompt Copy Button -->
@@ -666,8 +693,8 @@ function renderCompactBatchRow(b) {
             <!-- Expandable Detailed PR List (Batch-Only Invariant) -->
             ${isExpanded ? `
                 <div class="mt-2.5 pt-2 border-t border-slate-800/80 space-y-1">
-                    <div class="flex items-center justify-between text-[11px] text-slate-400 px-1 pb-1">
-                        <span>Pull Requests in this Batch: <strong class="text-cyan-400">${totalPRs} PRs</strong> (all PRs touch disjoint files)</span>
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[11px] text-slate-400 px-1 pb-1">
+                        <span class="truncate">Pull Requests in this Batch: <strong class="text-cyan-400">${totalPRs} PRs</strong> (all PRs touch disjoint files)</span>
                         <button onclick="openBatchScriptModal('${b.id}', 'ai-prompt')" class="text-cyan-400 hover:underline flex items-center gap-1 cursor-pointer">
                             <span>🤖</span> View full AI Prompt in modal &rarr;
                         </button>
@@ -1800,8 +1827,11 @@ function copyGeneratedMarkdownReview() {
         'issue': '🚫 Issue / bug detected in code'
     };
 
+    const reviewerHandle = state.currentUser?.username ? `@${state.currentUser.username}` : '@Community-Reviewer';
+    const roleLabel = isCurrentUserMaintainer() ? '🛡️ Maintainer' : '🔍 Community Reviewer';
+
     let md = `### 🔍 AnyPS5 Code Review\n\n`;
-    md += `**Reviewer:** @${state.currentUser.username} (${isCurrentUserMaintainer() ? '🛡️ Maintainer' : '🔍 Community Reviewer'})\n`;
+    md += `**Reviewer:** ${reviewerHandle} (${roleLabel})\n`;
     md += `**Recommendation:** ${recLabels[rec] || recLabels.approve}\n\n`;
     md += `#### 📋 AnyPS5 Quality Standards Checklist:\n`;
     md += `- [${chk.build ? 'x' : ' '}] Build compiles cleanly (CMakeLists / Clang / MSVC)\n`;
@@ -2199,6 +2229,38 @@ function closeGitHubLoginModal() {
     }
 }
 
+function closeAllActiveModals() {
+    closeBatchScriptModal();
+    closeInspectModal();
+    closeGitHubLoginModal();
+    const claimModal = document.getElementById('claim-modal');
+    if (claimModal) {
+        claimModal.classList.add('hidden');
+        claimModal.classList.remove('flex');
+    }
+}
+
+function setupModalBackdrops() {
+    // 1. Escape key closes any active modal
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' || e.key === 'Esc') {
+            closeAllActiveModals();
+        }
+    });
+
+    // 2. Clicking outside dialog card (on dark backdrop) closes modal
+    ['batch-script-modal', 'github-login-modal', 'inspect-modal', 'claim-modal'].forEach(id => {
+        const modal = document.getElementById(id);
+        if (modal) {
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    closeAllActiveModals();
+                }
+            });
+        }
+    });
+}
+
 // 🚀 1-Click Post review directly to GitHub PR via API
 async function postReviewToGitHubViaAPI() {
     if (!state.activeInspectPR) return;
@@ -2490,7 +2552,7 @@ function renderSidebarStats() {
             return `
                 <div class="flex items-center justify-between p-2 rounded-xl ${isMe ? 'bg-blue-950/50 border border-blue-500/50 shadow-sm' : 'bg-slate-900/60 border border-slate-800/80'} text-xs transition">
                     <div class="flex items-center gap-2">
-                        <img src="https://github.com/${m}.png" alt="${m}" class="w-5 h-5 rounded-full ring-1 ring-slate-700 flex-shrink-0" onerror="this.src='https://github.com/ghost.png'">
+                        <img src="https://github.com/${m}.png" alt="${m}" class="w-5 h-5 rounded-full ring-1 ring-slate-700 flex-shrink-0" onerror="this.onerror=null; this.src='${DEFAULT_AVATAR_SVG}'">
                         <span class="font-mono text-xs ${isMe ? 'text-cyan-300 font-bold' : 'text-slate-300'}">@${m}</span>
                         ${isMe ? '<span class="text-[9px] px-1.5 py-0.2 rounded-full bg-blue-900/80 text-cyan-200 border border-blue-700 font-semibold">You</span>' : ''}
                     </div>

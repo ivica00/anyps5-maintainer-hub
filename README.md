@@ -52,7 +52,7 @@ Otvorit će se u pregledniku na adresi: `http://localhost:8000/index.html`.
 - Jednim klikom filtrira sve konkurentne PR-ove koji se natječu za istu datoteku.
 
 ### 4. 👥 Reviewers & Workload Balancer
-- Pregled opterećenja maintainera (`boykopovar`, `Honza11`, `Eljack`, `maccer_acer`, `JJenkx`, `MarcZX100`, `DavidSamir`).
+- Pregled opterećenja maintainera (`boykopovar`, `Honza11`, `Eljack`, `JJenkx`, `MarcZX100`, `DavidSamir`).
 - Mogućnost brze raspodjele filtriranog seta PR-ova određenom recenzentu.
 
 ### 5. ⚡ Conflict-Free Batch Merge Planner
