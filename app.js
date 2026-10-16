@@ -186,8 +186,8 @@ function updateUserUI() {
     // Tab 1 (Mine vs Review Workbench)
     const tabMineIcon = document.getElementById('tab-mine-icon');
     const tabMineTitle = document.getElementById('tab-mine-title');
-    if (tabMineIcon) tabMineIcon.innerText = isM ? '👤' : '🔍';
-    if (tabMineTitle) tabMineTitle.innerText = isM ? 'My PRs' : 'My Reviews';
+    if (tabMineIcon) tabMineIcon.innerText = isM ? '📦' : '🔍';
+    if (tabMineTitle) tabMineTitle.innerText = isM ? 'My Batches' : 'My Batch Reviews';
 
     // Hero Banner
     const heroName = document.getElementById('hero-maintainer-name');
@@ -210,13 +210,13 @@ function updateUserUI() {
     }
     if (heroDesc) {
         heroDesc.innerText = isM 
-            ? 'PRs assigned to you for review and merge. Synced with Supabase in real-time.'
+            ? 'Conflict-free minibatches assigned to you for review, testing, and merge. Synced with Supabase in real-time.'
             : (isLoggedIn 
-                ? 'As a community contributor, you have full access to all AnyPS5 code analysis tools, conflict checks, local testing, and review builders.'
-                : 'Sign in with your GitHub account to access assigned PRs, resolve conflicts, and post reviews.');
+                ? 'As a community contributor, explore conflict-free batches, test PRs locally, and generate code reviews.'
+                : 'Sign in with your GitHub account to claim batches, resolve conflicts, and post reviews.');
     }
     if (heroBtnText) {
-        heroBtnText.innerText = isM ? 'Claim New PRs for Myself' : (isLoggedIn ? 'Explore PRs for Testing' : 'Sign in with GitHub');
+        heroBtnText.innerText = isM ? 'Explore Minibatch Studio' : (isLoggedIn ? 'Explore Batches for Testing' : 'Sign in with GitHub');
     }
 }
 
@@ -599,13 +599,13 @@ function renderCompactBatchRow(b) {
         ` : `
             <button onclick="claimBatchServerSide('${b.id}')" 
                     class="px-2.5 py-1 bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-white font-bold rounded-md text-[11px] shadow-sm shadow-cyan-600/20 transition flex items-center gap-1 cursor-pointer">
-                <span>➕</span> Claim (${selectedCount})
+                <span>➕</span> Claim Batch (${totalPRs})
             </button>
         `
     ) : `
         <button onclick="addBatchToReviewWatchlist('${b.id}')" 
                 class="px-2.5 py-1 bg-purple-950 hover:bg-purple-900 text-purple-300 border border-purple-800 rounded-md text-[11px] font-semibold transition flex items-center gap-1 cursor-pointer">
-            <span>🔍</span> Test (${selectedCount})
+            <span>🔍</span> Test Batch (${totalPRs})
         </button>
     `;
 
@@ -663,38 +663,32 @@ function renderCompactBatchRow(b) {
                 </div>
             </div>
 
-            <!-- Expandable Detailed PR Checkbox List -->
+            <!-- Expandable Detailed PR List (Batch-Only Invariant) -->
             ${isExpanded ? `
                 <div class="mt-2.5 pt-2 border-t border-slate-800/80 space-y-1">
                     <div class="flex items-center justify-between text-[11px] text-slate-400 px-1 pb-1">
-                        <span>Selected PRs: <strong class="text-cyan-400">${selectedCount}/${totalPRs}</strong> (all PRs touch disjoint files)</span>
+                        <span>Pull Requests in this Batch: <strong class="text-cyan-400">${totalPRs} PRs</strong> (all PRs touch disjoint files)</span>
                         <button onclick="openBatchScriptModal('${b.id}', 'ai-prompt')" class="text-cyan-400 hover:underline flex items-center gap-1 cursor-pointer">
                             <span>🤖</span> View full AI Prompt in modal &rarr;
                         </button>
                     </div>
                     <div class="space-y-1 max-h-60 overflow-y-auto pr-1">
-                        ${b.prs.map(pr => {
-                            const isChecked = b.selectedPRs.has(pr.number);
-                            return `
-                                <div class="flex items-center justify-between p-1.5 rounded-lg bg-slate-900/80 border border-slate-800/80 text-xs hover:border-slate-700 transition">
-                                    <div class="flex items-center gap-2 flex-1 min-w-0 pr-2">
-                                        <input type="checkbox" ${isChecked ? 'checked' : ''} 
-                                               ${isClaimedByOther ? 'disabled' : ''}
-                                               onchange="togglePRInBatch('${b.id}', ${pr.number}, this.checked)"
-                                               class="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-cyan-500 cursor-pointer">
-                                        <span class="font-mono font-bold text-cyan-400 text-[11px]">#${pr.number}</span>
-                                        <span class="text-[11px] text-slate-200 truncate cursor-pointer hover:text-cyan-300" onclick="openInspectModal(${pr.number})" title="${escapeHtml(pr.title)}">
-                                            ${escapeHtml(pr.title)}
-                                        </span>
-                                    </div>
-                                    <div class="flex items-center gap-2 flex-shrink-0 text-[10px] font-mono">
-                                        <span class="text-slate-400 text-[10px]">@${escapeHtml(pr.author)}</span>
-                                        <span class="text-emerald-400">+${pr.additions}</span>/<span class="text-rose-400">-${pr.deletions}</span>
-                                        <button onclick="openInspectModal(${pr.number})" class="text-cyan-400 hover:text-cyan-300 p-0.5 cursor-pointer">🔍</button>
-                                    </div>
+                        ${b.prs.map(pr => `
+                            <div class="flex items-center justify-between p-1.5 rounded-lg bg-slate-900/80 border border-slate-800/80 text-xs hover:border-slate-700 transition">
+                                <div class="flex items-center gap-2 flex-1 min-w-0 pr-2">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-cyan-400 flex-shrink-0"></span>
+                                    <span class="font-mono font-bold text-cyan-400 text-[11px]">#${pr.number}</span>
+                                    <span class="text-[11px] text-slate-200 truncate cursor-pointer hover:text-cyan-300" onclick="openInspectModal(${pr.number})" title="${escapeHtml(pr.title)}">
+                                        ${escapeHtml(pr.title)}
+                                    </span>
                                 </div>
-                            `;
-                        }).join('')}
+                                <div class="flex items-center gap-2 flex-shrink-0 text-[10px] font-mono">
+                                    <span class="text-slate-400 text-[10px]">@${escapeHtml(pr.author)}</span>
+                                    <span class="text-emerald-400">+${pr.additions}</span>/<span class="text-rose-400">-${pr.deletions}</span>
+                                    <button onclick="openInspectModal(${pr.number})" class="text-cyan-400 hover:text-cyan-300 p-0.5 cursor-pointer">🔍</button>
+                                </div>
+                            </div>
+                        `).join('')}
                     </div>
                 </div>
             ` : ''}
@@ -706,7 +700,6 @@ function renderCompactBatchRow(b) {
 function renderGridBatchCard(b) {
     const catBadge = getCategoryBadge(b.category);
     const tierBadge = getComplexityBadge(b.complexity, b.prNumbers.length);
-    const selectedCount = b.selectedPRs.size;
     const totalPRs = b.prs.length || b.prNumbers.length;
 
     const isClaimedByMe = b.claimedBy === state.currentMaintainer;
@@ -739,35 +732,29 @@ function renderGridBatchCard(b) {
                 <div>
                     <h3 class="text-sm font-bold text-slate-100 flex items-center justify-between">
                         <span>${escapeHtml(b.title)}</span>
-                        <span class="text-xs font-mono text-cyan-400">${selectedCount}/${totalPRs} selected</span>
+                        <span class="text-xs font-mono text-cyan-400">${totalPRs} PRs</span>
                     </h3>
                     <p class="text-[11px] text-slate-400 mt-0.5">
                         Batch contains ${totalPRs} PRs with disjoint files. 100% conflict-free merge.
                     </p>
                 </div>
 
-                <!-- PR Items inside batch with checkboxes -->
+                <!-- PR Items inside batch (Batch-Only Invariant) -->
                 <div class="space-y-1.5 pt-1 max-h-56 overflow-y-auto pr-1">
-                    ${b.prs.map(pr => {
-                        const isChecked = b.selectedPRs.has(pr.number);
-                        return `
-                            <div class="flex items-center justify-between p-2 rounded-lg bg-slate-900/90 border border-slate-800/80 text-xs hover:border-slate-700 transition">
-                                <div class="flex items-center gap-2 flex-1 min-w-0 pr-2">
-                                    <input type="checkbox" ${isChecked ? 'checked' : ''} 
-                                           ${isClaimedByOther ? 'disabled' : ''}
-                                           onchange="togglePRInBatch('${b.id}', ${pr.number}, this.checked)"
-                                           class="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-cyan-500 cursor-pointer">
-                                    <span class="font-mono font-bold text-cyan-400 text-[11px]">#${pr.number}</span>
-                                    <span class="text-[11px] text-slate-200 truncate cursor-pointer hover:text-cyan-300" onclick="openInspectModal(${pr.number})" title="${escapeHtml(pr.title)}">
-                                        ${escapeHtml(pr.title)}
-                                    </span>
-                                </div>
-                                <div class="flex items-center gap-1.5 flex-shrink-0 text-[10px] font-mono">
-                                    <span class="text-emerald-400">+${pr.additions}</span>/<span class="text-rose-400">-${pr.deletions}</span>
-                                </div>
+                    ${b.prs.map(pr => `
+                        <div class="flex items-center justify-between p-2 rounded-lg bg-slate-900/90 border border-slate-800/80 text-xs hover:border-slate-700 transition">
+                            <div class="flex items-center gap-2 flex-1 min-w-0 pr-2">
+                                <span class="w-1.5 h-1.5 rounded-full bg-cyan-400 flex-shrink-0"></span>
+                                <span class="font-mono font-bold text-cyan-400 text-[11px]">#${pr.number}</span>
+                                <span class="text-[11px] text-slate-200 truncate cursor-pointer hover:text-cyan-300" onclick="openInspectModal(${pr.number})" title="${escapeHtml(pr.title)}">
+                                    ${escapeHtml(pr.title)}
+                                </span>
                             </div>
-                        `;
-                    }).join('')}
+                            <div class="flex items-center gap-1.5 flex-shrink-0 text-[10px] font-mono">
+                                <span class="text-emerald-400">+${pr.additions}</span>/<span class="text-rose-400">-${pr.deletions}</span>
+                            </div>
+                        </div>
+                    `).join('')}
                 </div>
             </div>
 
@@ -787,13 +774,13 @@ function renderGridBatchCard(b) {
                         ` : `
                             <button onclick="claimBatchServerSide('${b.id}')" 
                                     class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-white font-bold rounded-lg text-xs shadow-md shadow-cyan-600/20 transition flex items-center gap-1 cursor-pointer">
-                                <span>➕</span> Claim (${selectedCount})
+                                <span>➕</span> Claim Batch (${totalPRs})
                             </button>
                         `
                     ) : `
                         <button onclick="addBatchToReviewWatchlist('${b.id}')" 
                                 class="px-3 py-1.5 bg-purple-950 hover:bg-purple-900 text-purple-300 border border-purple-800 rounded-lg text-xs font-semibold transition flex items-center gap-1 cursor-pointer">
-                            <span>🔍</span> Test batch (${selectedCount})
+                            <span>🔍</span> Test batch (${totalPRs})
                         </button>
                     `}
                 </div>
@@ -936,15 +923,14 @@ function togglePRInBatch(batchId, prNumber, checked) {
     renderMinibatches();
 }
 
-// Atomic Server-Side Batch Claiming (Prevents two maintainers claiming same PRs)
+// Atomic Server-Side Batch Claiming (Batch-Only Invariant: PRs claimed as atomic unit)
 async function claimBatchServerSide(batchId) {
     const batch = state.minibatches.find(b => b.id === batchId);
     if (!batch) return;
 
-    // First check if already claimed by another maintainer on the server
-    const selectedNums = Array.from(batch.selectedPRs);
-    if (selectedNums.length === 0) {
-        showToast('Select at least one PR checkbox');
+    const allBatchPRs = batch.prNumbers || [];
+    if (allBatchPRs.length === 0) {
+        showToast('Batch contains no PRs');
         return;
     }
 
@@ -971,8 +957,8 @@ async function claimBatchServerSide(batchId) {
             return;
         }
 
-        // 2. Assign the PRs in public.prs table
-        await updateBatchPRsInSupabase(selectedNums, {
+        // 2. Assign all PRs in public.prs table
+        await updateBatchPRsInSupabase(allBatchPRs, {
             assigned_reviewer: state.currentMaintainer,
             status: 'in-review'
         });
@@ -981,7 +967,7 @@ async function claimBatchServerSide(batchId) {
         batch.claimedBy = state.currentMaintainer;
         batch.claimedAt = new Date().toISOString();
 
-        selectedNums.forEach(num => {
+        allBatchPRs.forEach(num => {
             const pr = state.allPRs.find(p => p.number === num);
             if (pr) {
                 pr.assignedReviewer = state.currentMaintainer;
@@ -993,7 +979,7 @@ async function claimBatchServerSide(batchId) {
         renderMinibatches();
         renderRepoTable();
 
-        showToast(`Successfully claimed and locked batch "${batch.title}" for you!`);
+        showToast(`Successfully claimed and locked batch "${batch.title}" (${allBatchPRs.length} PRs)!`);
     } catch (e) {
         console.error('Batch claim error:', e);
         showToast('Error claiming batch from server');
@@ -1180,9 +1166,41 @@ function copyBatchScriptText() {
 }
 
 
+/// ==========================================
+// VIEW 1: MY CLAIMED BATCHES (BATCH-ONLY WORKFLOW)
 // ==========================================
-// VIEW 1: MY ASSIGNED PRs
-// ==========================================
+
+function findBatchForPR(prNumber) {
+    return state.minibatches.find(b => (b.prNumbers || []).includes(prNumber));
+}
+
+function jumpToBatch(batchId) {
+    if (!batchId) return;
+    switchMainView('batches');
+    const searchInput = document.getElementById('batch-search-input');
+    if (searchInput) searchInput.value = batchId;
+    const statusFilter = document.getElementById('batch-status-filter');
+    if (statusFilter) statusFilter.value = 'all';
+    state.expandedBatches.add(batchId);
+    renderMinibatches();
+    setTimeout(() => {
+        const el = document.getElementById(`batch-row-${batchId}`) || document.getElementById(`card-${batchId}`);
+        if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            el.classList.add('ring-2', 'ring-cyan-400');
+            setTimeout(() => el.classList.remove('ring-2', 'ring-cyan-400'), 2500);
+        }
+    }, 100);
+}
+
+function jumpToParentBatchFromInspect() {
+    if (!state.activeInspectPR) return;
+    const batch = findBatchForPR(state.activeInspectPR.number);
+    if (batch) {
+        closeInspectModal();
+        jumpToBatch(batch.id);
+    }
+}
 
 function renderMyPRs() {
     const container = document.getElementById('my-prs-container');
@@ -1190,130 +1208,28 @@ function renderMyPRs() {
     if (!container) return;
 
     const isM = isCurrentUserMaintainer();
-    const myPRs = isM 
-        ? state.allPRs.filter(p => p.assignedReviewer === state.currentMaintainer)
-        : state.allPRs.filter(p => state.reviewerWatchlist.has(p.number) || p.assignedReviewer === state.currentMaintainer);
     
-    // Update badge in top bar
+    // In batch-only workflow, View 1 displays claimed batches
+    const myBatches = isM 
+        ? state.minibatches.filter(b => b.claimedBy === state.currentMaintainer)
+        : state.minibatches.filter(b => b.claimedBy === state.currentMaintainer || (b.prNumbers && b.prNumbers.some(num => state.reviewerWatchlist.has(num))));
+    
+    // Update badge in top bar (Number of claimed batches)
     const badge = document.getElementById('my-pr-count-badge');
-    if (badge) badge.innerText = myPRs.length;
+    if (badge) badge.innerText = myBatches.length;
 
     // Update status pills counts
-    updateMyStatusCounts(myPRs);
+    updateMyBatchCategoryCounts(myBatches);
 
-    // Apply active status filter
-    let visiblePRs = myPRs;
-    if (state.myStatusFilter === 'pending') {
-        visiblePRs = myPRs.filter(p => p.status === 'unassigned' || p.status === 'in-review');
-    } else if (state.myStatusFilter !== 'all') {
-        visiblePRs = myPRs.filter(p => p.status === state.myStatusFilter);
+    // Apply active category filter for batches
+    let visibleBatches = myBatches;
+    if (state.myStatusFilter && state.myStatusFilter !== 'all') {
+        visibleBatches = myBatches.filter(b => b.category === state.myStatusFilter);
     }
 
-    if (myPRs.length === 0) {
+    if (myBatches.length === 0) {
         container.innerHTML = '';
         if (emptyState) {
-            const unassignedLowPRs = state.allPRs
-                .filter(p => (p.assignedReviewer === 'none' || !p.assignedReviewer) && p.riskLevel === 'low')
-                .slice(0, 4);
-
-            const recCardsHtml = unassignedLowPRs.length > 0 ? `
-                <div class="space-y-2.5 pt-2 text-left">
-                    <div class="flex items-center justify-between">
-                        <div class="flex items-center gap-2">
-                            <span class="text-xs text-cyan-400 font-mono">▲ ◯ ✕ ▢</span>
-                            <span class="text-xs font-bold text-white uppercase tracking-wider">Recommended Quick-Merge PRs</span>
-                        </div>
-                        <span class="text-[10px] text-emerald-400 font-mono bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800">0 collisions</span>
-                    </div>
-
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                        ${unassignedLowPRs.map(pr => `
-                            <div class="p-3 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-blue-500/50 transition space-y-2 flex flex-col justify-between">
-                                <div class="space-y-1">
-                                    <div class="flex items-center justify-between gap-1">
-                                        <span class="font-mono text-cyan-400 font-bold text-xs">#${pr.number}</span>
-                                        ${getCategoryBadge(pr.category)}
-                                        <span class="text-[10px] text-slate-400 font-mono">+${pr.additions} / -${pr.deletions}</span>
-                                    </div>
-                                    <div class="text-xs font-semibold text-slate-200 line-clamp-1" title="${escapeHtml(pr.title)}">
-                                        ${escapeHtml(pr.title)}
-                                    </div>
-                                    <div class="text-[10px] text-slate-400">
-                                        Author: <span class="text-slate-300 font-mono">@${escapeHtml(pr.author)}</span>
-                                    </div>
-                                </div>
-                                <div class="pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
-                                    <button onclick="openInspectModal(${pr.number})" class="text-[11px] text-slate-400 hover:text-cyan-300 transition cursor-pointer">
-                                        🧪 Details
-                                    </button>
-                                    ${isM ? `
-                                        <button onclick="assignPR(${pr.number}, '${state.currentMaintainer}')" class="px-2.5 py-1 rounded-lg bg-gradient-to-r from-blue-700 to-cyan-600 hover:from-blue-600 hover:to-cyan-500 text-white font-bold text-[11px] transition shadow-md shadow-blue-700/30 flex items-center gap-1 cursor-pointer">
-                                            <span>▲</span> Claim
-                                        </button>
-                                    ` : `
-                                        <button onclick="toggleWatchlistSingle(${pr.number})" class="px-2.5 py-1 rounded-lg bg-purple-950 hover:bg-purple-900 text-purple-300 border border-purple-800 font-bold text-[11px] transition flex items-center gap-1 cursor-pointer">
-                                            <span>▲</span> Add to Review
-                                        </button>
-                                    `}
-                                </div>
-                            </div>
-                        `).join('')}
-                    </div>
-                </div>
-            ` : '';
-
-            emptyState.innerHTML = isM ? `
-                <div class="relative overflow-hidden p-6 sm:p-8 rounded-2xl bg-cardbg/95 border border-blue-900/40 shadow-2xl space-y-4">
-                    <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-600 via-cyan-400 to-blue-600"></div>
-                    <div class="flex flex-col items-center justify-center text-center space-y-2">
-                        <div class="w-12 h-12 rounded-2xl bg-blue-950/80 border border-blue-800/80 flex items-center justify-center text-2xl shadow-inner text-cyan-400">
-                            🎮
-                        </div>
-                        <h3 class="text-base sm:text-lg font-bold text-white tracking-wide">AnyPS5 Maintainer Console is Ready</h3>
-                        <p class="text-xs sm:text-sm text-slate-400 max-w-lg mx-auto">
-                            Your official review and merge queue is currently empty. Claim one of the recommended batches or pick PRs manually.
-                        </p>
-                    </div>
-
-                    ${recCardsHtml}
-
-                    <div class="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-3 border-t border-slate-800/80">
-                        <button onclick="quickClaimSafeBatch(5)" class="w-full sm:w-auto px-4 py-2.5 bg-gradient-to-r from-blue-700 to-cyan-600 hover:from-blue-600 hover:to-cyan-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-blue-700/30 transition flex items-center justify-center gap-2 cursor-pointer">
-                            <span>🟢</span> Claim 5 Quick-Merge PRs
-                        </button>
-                        <button onclick="switchMainView('batches')" class="w-full sm:w-auto px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 text-xs font-semibold rounded-xl transition flex items-center justify-center gap-2 cursor-pointer">
-                            <span>⚡</span> Open Minibatch Studio
-                        </button>
-                        <button onclick="openClaimModal()" class="w-full sm:w-auto px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 text-xs font-medium rounded-xl transition flex items-center justify-center gap-2 cursor-pointer">
-                            <span>➕</span> Manual selection...
-                        </button>
-                    </div>
-                </div>
-            ` : `
-                <div class="relative overflow-hidden p-6 sm:p-8 rounded-2xl bg-cardbg/95 border border-purple-900/40 shadow-2xl space-y-4">
-                    <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-purple-600 via-pink-400 to-purple-600"></div>
-                    <div class="flex flex-col items-center justify-center text-center space-y-2">
-                        <div class="w-12 h-12 rounded-2xl bg-purple-950/80 border border-purple-800/80 flex items-center justify-center text-2xl shadow-inner text-purple-300">
-                            🔍
-                        </div>
-                        <h3 class="text-base sm:text-lg font-bold text-white tracking-wide">AnyPS5 Reviewer Workbench is Ready</h3>
-                        <p class="text-xs sm:text-sm text-slate-400 max-w-lg mx-auto">
-                            Your review workbench is currently empty. Select quick PRs below for local testing, diff inspection, or generating reviews.
-                        </p>
-                    </div>
-
-                    ${recCardsHtml}
-
-                    <div class="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-3 border-t border-slate-800/80">
-                        <button onclick="addSafeQuickBatchToReviewer()" class="w-full sm:w-auto px-4 py-2.5 bg-purple-950 hover:bg-purple-900 text-purple-300 border border-purple-800 text-xs font-semibold rounded-xl transition flex items-center justify-center gap-2 cursor-pointer">
-                            <span>🟢</span> Add 5 Easy PRs
-                        </button>
-                        <button onclick="switchMainView('batches')" class="w-full sm:w-auto px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 text-xs font-semibold rounded-xl transition flex items-center justify-center gap-2 cursor-pointer">
-                            <span>⚡</span> Explore Minibatch Studio
-                        </button>
-                    </div>
-                </div>
-            `;
             emptyState.classList.remove('hidden');
         }
         renderSidebarStats();
@@ -1322,121 +1238,143 @@ function renderMyPRs() {
         if (emptyState) emptyState.classList.add('hidden');
     }
 
-    if (visiblePRs.length === 0) {
+    if (visibleBatches.length === 0) {
         container.innerHTML = `
             <div class="p-8 text-center bg-slate-900/60 rounded-xl border border-slate-800 text-slate-400 text-xs">
-                No PRs with this status. <button onclick="resetMyStatusFilter()" class="text-cyan-400 underline ml-1 cursor-pointer">Show all</button>
+                No claimed batches in this category. <button onclick="resetMyStatusFilter()" class="text-cyan-400 underline ml-1 cursor-pointer">Show all</button>
             </div>
         `;
         return;
     }
 
-    container.innerHTML = visiblePRs.map(pr => {
-        const riskBadge = getRiskBadge(pr.riskLevel);
-        const catBadge = getCategoryBadge(pr.category);
-        const statusBadge = getStatusBadge(pr.status);
-        const hasHotspots = pr.hotspots && pr.hotspots.length > 0;
+    container.innerHTML = visibleBatches.map(b => {
+        const catBadge = getCategoryBadge(b.category);
+        const tierBadge = getComplexityBadge(b.complexity, b.prNumbers.length);
+        const totalPRs = b.prs.length || b.prNumbers.length;
+        const isExpanded = state.expandedBatches.has(b.id);
+
+        let totalAdds = 0;
+        let totalDels = 0;
+        const uniqueFiles = new Set();
+        b.prs.forEach(p => {
+            totalAdds += (p.additions || 0);
+            totalDels += (p.deletions || 0);
+            (p.files || []).forEach(f => {
+                const path = typeof f === 'string' ? f : (f.path || '');
+                if (path) uniqueFiles.add(path);
+            });
+        });
 
         return `
-            <div class="p-3.5 sm:p-4 rounded-xl bg-cardbg border border-slate-800/90 hover:border-slate-700 transition shadow-sm space-y-2.5">
+            <div class="p-4 sm:p-5 rounded-2xl bg-cardbg/95 border border-cyan-500/40 ring-1 ring-cyan-500/20 shadow-xl space-y-3.5 transition" id="my-batch-${b.id}">
+                <!-- Header -->
                 <div class="flex items-center justify-between gap-2 flex-wrap">
                     <div class="flex items-center gap-2 flex-wrap">
-                        <span class="font-mono font-bold text-cyan-400 text-xs sm:text-sm">#${pr.number}</span>
+                        <span class="font-mono text-cyan-400 font-black text-sm bg-cyan-950/80 px-2.5 py-0.5 rounded border border-cyan-800">
+                            ${b.id.toUpperCase()}
+                        </span>
                         ${catBadge}
-                        ${riskBadge}
-                        ${statusBadge}
+                        ${tierBadge}
+                        <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono">
+                            📁 ${uniqueFiles.size} disjoint files (0 collisions)
+                        </span>
                     </div>
-                    <div class="text-[11px] text-slate-400 font-mono">
-                        <span class="text-slate-300 font-semibold">${pr.fileCount} ${pr.fileCount === 1 ? 'file' : 'files'}</span> 
-                        (<span class="text-emerald-400">+${pr.additions}</span> / <span class="text-rose-400">-${pr.deletions}</span>)
+                    <div class="text-xs font-mono">
+                        <span class="text-emerald-400 font-bold">+${totalAdds}</span> / <span class="text-rose-400 font-bold">-${totalDels}</span> lines
                     </div>
                 </div>
 
+                <!-- Title & Batch Meta -->
                 <div>
-                    <h3 class="text-sm sm:text-base font-semibold text-slate-100 hover:text-cyan-300 transition cursor-pointer" onclick="openInspectModal(${pr.number})">
-                        ${escapeHtml(pr.title)}
+                    <h3 class="text-base font-bold text-white flex items-center justify-between">
+                        <span>${escapeHtml(b.title)}</span>
+                        <span class="text-xs font-mono text-cyan-300">${totalPRs} PRs</span>
                     </h3>
-                    <div class="flex items-center gap-2 mt-1 text-[11px] text-slate-400 flex-wrap">
-                        <span>Author: <strong class="text-slate-300 font-mono">@${escapeHtml(pr.author)}</strong></span>
-                        <span>•</span>
-                        <span>${formatRelativeTime(pr.createdAt)}</span>
-                        ${hasHotspots ? `
-                            <span class="px-1.5 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-800 text-[10px] font-bold">
-                                🔥 Hotspot: ${escapeHtml(pr.hotspots[0].split('/').pop())}
-                            </span>
-                        ` : ''}
+                    <p class="text-xs text-slate-300 mt-1">
+                        Atomic conflict-free batch claimed and locked to your workspace. All member PRs touch separate files.
+                    </p>
+                </div>
+
+                <!-- Batch Action Tools (AI Prompt, CLI Merge, CLI Test, Release) -->
+                <div class="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 flex items-center justify-between flex-wrap gap-2 text-xs">
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                        <button onclick="copyBatchAIPrompt('${b.id}', event)" class="px-3 py-1.5 bg-indigo-950 hover:bg-indigo-900 active:scale-95 text-indigo-300 border border-indigo-800 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer" title="Copy deterministic prompt for Claude / GPT / Gemini">
+                            <span>🤖</span> <span>Copy AI Prompt</span>
+                        </button>
+                        <button onclick="openBatchScriptModal('${b.id}', 'merge')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-xs font-mono transition flex items-center gap-1.5 cursor-pointer" title="gh CLI batch merge script">
+                            <span>💻</span> <span>CLI Merge</span>
+                        </button>
+                        <button onclick="openBatchScriptModal('${b.id}', 'test')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-xs font-mono transition flex items-center gap-1.5 cursor-pointer" title="Local branch checkout & test script">
+                            <span>🔍</span> <span>CLI Test</span>
+                        </button>
+                    </div>
+
+                    <div class="flex items-center gap-1.5">
+                        <button onclick="releaseBatch('${b.id}')" class="px-3 py-1.5 bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-800 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1">
+                            <span>🔓</span> Release Batch
+                        </button>
                     </div>
                 </div>
 
-                ${pr.notes ? `
-                    <div class="text-xs p-2 rounded bg-slate-950 border border-slate-800 text-slate-300 flex items-start gap-2">
-                        <span class="text-slate-500">📝:</span>
-                        <span class="italic text-slate-300 truncate">${escapeHtml(pr.notes)}</span>
-                    </div>
-                ` : ''}
-
-                <!-- Action Tools Row -->
-                <div class="pt-2 border-t border-slate-800 flex items-center justify-between flex-wrap gap-2">
-                    <div class="flex items-center gap-1.5">
-                        <button onclick="openInspectModal(${pr.number})" 
-                                class="px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs shadow-md shadow-cyan-600/20 transition flex items-center gap-1 cursor-pointer">
-                            <span>🧪</span> Inspect & Tools
-                        </button>
-                        <button onclick="copyCliCheckout(${pr.number})" 
-                                class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-mono transition border border-slate-700 flex items-center gap-1 cursor-pointer">
-                            <span>💻</span> gh checkout
+                <!-- Detailed PRs inside Batch -->
+                <div class="space-y-1.5 pt-1">
+                    <div class="flex items-center justify-between text-xs text-slate-400 px-1">
+                        <span class="font-semibold text-slate-300">Pull Requests in this Batch (${totalPRs}):</span>
+                        <button onclick="toggleBatchExpand('${b.id}')" class="text-cyan-400 hover:underline text-[11px] cursor-pointer">
+                            ${isExpanded ? '▲ Hide PR Details' : '▼ Show All ' + totalPRs + ' PRs'}
                         </button>
                     </div>
 
-                    ${isM ? `
-                        <div class="flex items-center gap-1.5">
-                            <select onchange="quickUpdateMyStatus(${pr.number}, this.value)" 
-                                    class="bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-cyan-500 cursor-pointer">
-                                <option value="in-review" ${pr.status === 'in-review' || pr.status === 'unassigned' ? 'selected' : ''}>🔍 In Review</option>
-                                <option value="approved" ${pr.status === 'approved' ? 'selected' : ''}>✅ Approved</option>
-                                <option value="changes" ${pr.status === 'changes' ? 'selected' : ''}>⚠️ Request Changes</option>
-                                <option value="conflict" ${pr.status === 'conflict' ? 'selected' : ''}>🚫 Conflict</option>
-                                <option value="ready" ${pr.status === 'ready' ? 'selected' : ''}>🚀 Ready to Merge</option>
-                            </select>
-                            <button onclick="unassignPR(${pr.number})" title="Remove from my queue" 
-                                    class="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-slate-800 transition text-xs cursor-pointer">
-                                ✕
-                            </button>
-                        </div>
-                    ` : `
-                        <div class="flex items-center gap-1.5">
-                            <a href="${pr.url}/files" target="_blank" class="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-slate-700 rounded-lg text-xs font-semibold transition flex items-center gap-1">
-                                <span>🐙</span> GitHub Files &nearr;
-                            </a>
-                            <button onclick="toggleWatchlistSingle(${pr.number})" title="Remove from my review workbench" 
-                                    class="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-slate-800 transition text-xs cursor-pointer">
-                                ✕
-                            </button>
-                        </div>
-                    `}
+                    <div class="space-y-1.5 ${isExpanded ? '' : 'max-h-56 overflow-y-auto pr-1'}">
+                        ${b.prs.map(pr => `
+                            <div class="flex items-center justify-between p-2 sm:p-2.5 rounded-xl bg-slate-900/80 border border-slate-800/80 hover:border-slate-700 text-xs transition">
+                                <div class="flex items-center gap-2 flex-1 min-w-0 pr-2">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-cyan-400 flex-shrink-0"></span>
+                                    <span class="font-mono font-bold text-cyan-400 text-xs">#${pr.number}</span>
+                                    <span class="text-xs text-slate-200 truncate cursor-pointer hover:text-cyan-300 font-medium" onclick="openInspectModal(${pr.number})" title="${escapeHtml(pr.title)}">
+                                        ${escapeHtml(pr.title)}
+                                    </span>
+                                </div>
+                                <div class="flex items-center gap-2 flex-shrink-0 text-[11px] font-mono">
+                                    <span class="text-slate-400 hidden sm:inline">@${escapeHtml(pr.author)}</span>
+                                    <span class="text-emerald-400">+${pr.additions}</span>/<span class="text-rose-400">-${pr.deletions}</span>
+                                    ${isM ? `
+                                        <select onchange="quickUpdateMyStatus(${pr.number}, this.value)" class="bg-slate-950 border border-slate-700 text-slate-300 text-[11px] rounded px-1.5 py-0.5 focus:outline-none cursor-pointer">
+                                            <option value="in-review" ${pr.status === 'in-review' || pr.status === 'unassigned' ? 'selected' : ''}>🔍 In Review</option>
+                                            <option value="approved" ${pr.status === 'approved' ? 'selected' : ''}>✅ Approved</option>
+                                            <option value="changes" ${pr.status === 'changes' ? 'selected' : ''}>⚠️ Changes</option>
+                                            <option value="ready" ${pr.status === 'ready' ? 'selected' : ''}>🚀 Ready</option>
+                                        </select>
+                                    ` : ''}
+                                    <button onclick="openInspectModal(${pr.number})" class="px-2 py-1 bg-cyan-950 hover:bg-cyan-900 text-cyan-300 border border-cyan-800 rounded text-[11px] font-semibold cursor-pointer">
+                                        🧪 Inspect
+                                    </button>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
                 </div>
             </div>
         `;
     }).join('');
+
     renderSidebarStats();
 }
 
-function updateMyStatusCounts(myPRs) {
+function updateMyBatchCategoryCounts(myBatches) {
     const elAll = document.getElementById('my-stat-all');
-    const elPending = document.getElementById('my-stat-pending');
-    const elApproved = document.getElementById('my-stat-approved');
-    const elChanges = document.getElementById('my-stat-changes');
-    const elReady = document.getElementById('my-stat-ready');
+    const elAgc = document.getElementById('my-stat-agc');
+    const elPrx = document.getElementById('my-stat-prx');
+    const elKernel = document.getElementById('my-stat-kernel');
 
-    if (elAll) elAll.innerText = myPRs.length;
-    if (elPending) elPending.innerText = myPRs.filter(p => p.status === 'unassigned' || p.status === 'in-review').length;
-    if (elApproved) elApproved.innerText = myPRs.filter(p => p.status === 'approved').length;
-    if (elChanges) elChanges.innerText = myPRs.filter(p => p.status === 'changes').length;
-    if (elReady) elReady.innerText = myPRs.filter(p => p.status === 'ready').length;
+    if (elAll) elAll.innerText = myBatches.length;
+    if (elAgc) elAgc.innerText = myBatches.filter(b => b.category === 'AGC & Graphics').length;
+    if (elPrx) elPrx.innerText = myBatches.filter(b => b.category === 'PRX High-Level Modules').length;
+    if (elKernel) elKernel.innerText = myBatches.filter(b => b.category === 'Kernel & Syscalls').length;
 }
 
-function filterMyPRs(status, element) {
-    state.myStatusFilter = status;
+function filterMyBatches(cat, element) {
+    state.myStatusFilter = cat;
     document.querySelectorAll('.my-pill').forEach(btn => {
         btn.classList.remove('bg-slate-800', 'border-cyan-500/50', 'text-cyan-300');
         btn.classList.add('bg-slate-900', 'border-slate-800', 'text-slate-400');
@@ -1450,7 +1388,7 @@ function filterMyPRs(status, element) {
 
 function resetMyStatusFilter() {
     const firstPill = document.querySelector('.my-pill');
-    filterMyPRs('all', firstPill);
+    filterMyBatches('all', firstPill);
 }
 
 async function quickUpdateMyStatus(prNumber, newStatus) {
@@ -1715,6 +1653,23 @@ function openInspectModal(prNumber) {
         submitReviewBtn.href = `${pr.url}/files`;
     }
 
+    // Parent Batch Information (Batch-Only Invariant)
+    const parentBatch = findBatchForPR(pr.number);
+    const parentBatchPill = document.getElementById('inspect-parent-batch-pill');
+    const parentBatchPillText = document.getElementById('inspect-parent-batch-pill-text');
+    const parentBatchBtn = document.getElementById('inspect-parent-batch-btn');
+    const parentBatchTitle = document.getElementById('inspect-parent-batch-title');
+
+    if (parentBatch) {
+        if (parentBatchPill) parentBatchPill.classList.remove('hidden');
+        if (parentBatchPillText) parentBatchPillText.innerText = `${parentBatch.id.toUpperCase()}`;
+        if (parentBatchBtn) parentBatchBtn.classList.remove('hidden');
+        if (parentBatchTitle) parentBatchTitle.innerText = `${parentBatch.id.toUpperCase()}: ${parentBatch.title}`;
+    } else {
+        if (parentBatchPill) parentBatchPill.classList.add('hidden');
+        if (parentBatchBtn) parentBatchBtn.classList.add('hidden');
+    }
+
     updateInspectModalWatchlistBtn();
     setReviewerRecommendation('approve');
 
@@ -1955,6 +1910,14 @@ function renderRepoTable() {
     tbody.innerHTML = list.slice(0, 50).map(pr => {
         const isAssignedToMe = pr.assignedReviewer === state.currentMaintainer;
         const isWatched = state.reviewerWatchlist.has(pr.number);
+        const parentBatch = findBatchForPR(pr.number);
+
+        const batchActionBtn = parentBatch ? `
+            <button onclick="jumpToBatch('${parentBatch.id}')" title="View ${escapeHtml(parentBatch.title)} in Minibatch Studio"
+                    class="px-2.5 py-1 bg-slate-900 hover:bg-cyan-950 text-cyan-400 border border-slate-700 hover:border-cyan-600 rounded text-[11px] font-mono font-semibold transition cursor-pointer flex items-center gap-1">
+                <span>📦</span> ${parentBatch.id.toUpperCase()}
+            </button>
+        ` : `<span class="text-slate-500 font-mono text-[10px]">No batch</span>`;
 
         return `
             <tr class="hover:bg-slate-800/50 transition">
@@ -1966,30 +1929,15 @@ function renderRepoTable() {
                 <td class="px-4 py-2.5 whitespace-nowrap">${getCategoryBadge(pr.category)}</td>
                 <td class="px-4 py-2.5 whitespace-nowrap">${getRiskBadge(pr.riskLevel)}</td>
                 <td class="px-4 py-2.5 font-mono text-slate-300 whitespace-nowrap">
-                    ${isAssignedToMe ? '<span class="text-cyan-400 font-bold">👤 You (@' + state.currentMaintainer + ')</span>' : (pr.assignedReviewer !== 'none' ? '@' + pr.assignedReviewer : '<span class="text-slate-500">None</span>')}
+                    ${isAssignedToMe ? '<span class="text-cyan-400 font-bold">👤 You (@' + state.currentMaintainer + ')</span>' : (pr.assignedReviewer !== 'none' ? '@' + pr.assignedReviewer : '<span class="text-slate-500">Available</span>')}
                 </td>
                 <td class="px-4 py-2.5 text-right whitespace-nowrap">
-                    ${isM ? (
-                        isAssignedToMe ? `
-                            <button onclick="openInspectModal(${pr.number})" class="px-2.5 py-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded font-bold text-[11px] cursor-pointer shadow-sm">
-                                Inspect
-                            </button>
-                        ` : `
-                            <button onclick="assignPR(${pr.number}, state.currentMaintainer)" class="px-2.5 py-1 bg-slate-800 hover:bg-cyan-600 hover:text-white text-cyan-400 border border-slate-700 rounded text-[11px] font-semibold transition cursor-pointer">
-                                + Claim
-                            </button>
-                        `
-                    ) : `
-                        <div class="inline-flex items-center gap-1.5">
-                            <button onclick="openInspectModal(${pr.number})" class="px-2 py-1 bg-purple-950 hover:bg-purple-900 text-purple-300 border border-purple-800 rounded font-semibold text-[11px] transition cursor-pointer">
-                                🔍 Inspect
-                            </button>
-                            <button onclick="toggleWatchlistSingle(${pr.number})" title="${isWatched ? 'Remove from my reviews' : 'Add to my reviews'}"
-                                    class="px-2 py-1 ${isWatched ? 'bg-rose-950 text-rose-300 border-rose-800' : 'bg-slate-800 text-slate-300 border-slate-700 hover:text-white'} border rounded text-[11px] font-semibold transition cursor-pointer">
-                                ${isWatched ? '✓ Saved' : '+ Watch'}
-                            </button>
-                        </div>
-                    `}
+                    <div class="inline-flex items-center gap-1.5 justify-end">
+                        <button onclick="openInspectModal(${pr.number})" class="px-2.5 py-1 bg-cyan-950 hover:bg-cyan-900 text-cyan-300 border border-cyan-800 rounded font-semibold text-[11px] transition cursor-pointer">
+                            🧪 Inspect
+                        </button>
+                        ${batchActionBtn}
+                    </div>
                 </td>
             </tr>
         `;
@@ -2315,44 +2263,30 @@ function handleHeroAction() {
         openGitHubLoginModal();
         return;
     }
-    if (isCurrentUserMaintainer()) {
-        openClaimModal();
-    } else {
-        switchMainView('batches');
-        showToast('Explore batches and select PRs for local testing!');
+    switchMainView('batches');
+}
+
+function addSafeQuickBatchToReviewer() {
+    const safeBatch = state.minibatches.find(b => b.complexity === 'low') || state.minibatches[0];
+    if (safeBatch) {
+        addBatchToReviewWatchlist(safeBatch.id);
     }
 }
 
-function addSafeQuickBatchToReviewer(count = 5) {
-    const safePRs = state.allPRs.filter(p => p.riskLevel === 'low').slice(0, count);
-    safePRs.forEach(p => state.reviewerWatchlist.add(p.number));
-    savePersistentUser();
-    renderMyPRs();
-    showToast(`Added ${safePRs.length} easy PRs to your review workbench!`);
-}
-
-async function quickClaimSafeBatch(count = 5) {
+async function quickClaimSafeBatch() {
     if (!isCurrentUserMaintainer()) {
-        addSafeQuickBatchToReviewer(count);
+        addSafeQuickBatchToReviewer();
         return;
     }
-    const safePRs = state.allPRs.filter(p => p.assignedReviewer !== state.currentMaintainer && p.riskLevel === 'low').slice(0, count);
-    if (safePRs.length === 0) {
-        showToast('No available Quick-Merge PRs found');
-        return;
+    const safeBatch = state.minibatches.find(b => (b.status === 'available' || b.claimedBy === 'none') && b.complexity === 'low')
+        || state.minibatches.find(b => b.status === 'available' || b.claimedBy === 'none');
+    
+    if (safeBatch) {
+        await claimBatchServerSide(safeBatch.id);
+        switchMainView('mine');
+    } else {
+        showToast('No available batches found in database');
     }
-    const nums = safePRs.map(p => p.number);
-    nums.forEach(n => assignPR(n, state.currentMaintainer, false));
-    renderMyPRs();
-    renderMinibatches();
-    renderRepoTable();
-    renderSidebarStats();
-
-    await updateBatchPRsInSupabase(nums, {
-        assigned_reviewer: state.currentMaintainer,
-        status: 'in-review'
-    });
-    showToast(`Claimed ${nums.length} Quick-Merge PRs for @${state.currentMaintainer}!`);
 }
 
 // Switch between "My PRs", "Minibatches", and "Entire Repository"

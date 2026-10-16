@@ -82,8 +82,8 @@
 
     <!-- Top Responsive Navigation Bar (PS5 DualSense LED Edition) -->
     <header class="border-b border-blue-900/40 bg-darkpanel/95 backdrop-blur sticky top-0 z-40 ps5-lightbar">
-        <div class="max-w-[1560px] mx-auto px-3 sm:px-6 lg:px-8 py-2.5 sm:py-3">
-            <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div class="w-full px-4 sm:px-6 lg:px-8 py-2.5 sm:py-3">
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 w-full">
                 <!-- Branding & Supabase Status -->
                 <div class="flex items-center justify-between gap-4">
                     <div class="flex items-center gap-3">
@@ -112,8 +112,8 @@
                     </button>
                 </div>
 
-                <!-- Maintainer Selector & Tab Switcher (Fully Responsive) -->
-                <div class="flex flex-wrap sm:flex-nowrap items-center gap-2.5 w-full md:w-auto">
+                <!-- Maintainer Selector & Tab Switcher (Fully Responsive, Anchored to Right) -->
+                <div class="flex flex-wrap sm:flex-nowrap items-center gap-2.5 w-full md:w-auto md:ml-auto">
                     <!-- GitHub Profile & Role Pill Button -->
                     <button onclick="openGitHubLoginModal()" id="github-auth-btn" title="Click for GitHub sign in or profile"
                             class="flex-1 sm:flex-initial flex items-center justify-between sm:justify-start gap-2 bg-slate-900/90 hover:bg-slate-800 border border-blue-800/50 hover:border-cyan-400 rounded-xl px-3 py-1.5 text-xs transition cursor-pointer shadow-sm">
@@ -136,7 +136,7 @@
                     <!-- View Switcher Tabs -->
                     <div class="flex p-0.5 bg-slate-950/80 border border-slate-800 rounded-xl text-xs font-medium w-full sm:w-auto justify-center flex-wrap sm:flex-nowrap gap-0.5">
                         <button id="view-tab-mine" onclick="switchMainView('mine')" class="tab-btn active flex-1 sm:flex-initial px-3 sm:px-3.5 py-1.5 rounded-lg transition flex items-center justify-center gap-1.5 border border-transparent whitespace-nowrap">
-                            <span id="tab-mine-icon">👤</span> <span id="tab-mine-title">My PRs</span> (<span id="my-pr-count-badge">0</span>)
+                            <span id="tab-mine-icon">📦</span> <span id="tab-mine-title">My Batches</span> (<span id="my-pr-count-badge">0</span>)
                         </button>
                         <button id="view-tab-batches" onclick="switchMainView('batches')" class="tab-btn flex-1 sm:flex-initial px-3 sm:px-3.5 py-1.5 rounded-lg transition text-slate-400 hover:text-slate-200 border border-transparent flex items-center justify-center gap-1.5 whitespace-nowrap">
                             <span>⚡</span> Minibatches (<span id="batches-count-badge">0</span>)
@@ -158,7 +158,7 @@
             <!-- LEFT WORKSPACE COLUMN (Views 1, 2, 3) -->
             <div class="lg:col-span-8 xl:col-span-9 space-y-6">
 
-                <!-- ================= VIEW 1: MY PRs (DEFAULT FOCUS) ================= -->
+                <!-- ================= VIEW 1: MY BATCHES (BATCH-ONLY WORKFLOW) ================= -->
                 <section id="view-mine-section" class="space-y-5">
                     
                     <!-- Hero Action Banner (PS5 Ceramic Dark Panel) -->
@@ -176,58 +176,55 @@
                                 </span>
                             </div>
                             <p id="hero-maintainer-desc" class="text-xs sm:text-sm text-slate-300">
-                                Your assigned pull requests for review, testing, and merge. Synchronized with Supabase in real-time.
+                                Your assigned conflict-free pull request minibatches for review, testing, and merge.
                             </p>
                         </div>
 
                         <div class="flex items-center gap-2.5 w-full sm:w-auto">
                             <!-- Primary Action Button (PlayStation Blue LED) -->
                             <button id="hero-action-btn" onclick="handleHeroAction()" class="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-700 via-blue-600 to-cyan-500 hover:from-blue-600 hover:to-cyan-400 active:scale-95 text-white font-bold text-xs sm:text-sm shadow-lg shadow-blue-700/30 transition flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-                                <span id="hero-action-btn-text">Claim new PRs</span>
+                                <span>⚡</span>
+                                <span id="hero-action-btn-text">Claim new batches</span>
                             </button>
                         </div>
                     </div>
 
-            <!-- Status Quick Filter Pills for My PRs (Wrap on mobile) -->
+            <!-- Status Quick Filter Pills for My Batches (Wrap on mobile) -->
             <div id="my-status-pills" class="flex flex-wrap items-center gap-1.5 sm:gap-2 text-xs">
-                <button onclick="filterMyPRs('all', this)" class="my-pill active px-3 py-1.5 rounded-lg bg-slate-800 border border-cyan-500/50 text-cyan-300 font-medium">
-                    All Mine (<span id="my-stat-all">0</span>)
+                <button onclick="filterMyBatches('all', this)" class="my-pill active px-3 py-1.5 rounded-lg bg-slate-800 border border-cyan-500/50 text-cyan-300 font-medium">
+                    All My Batches (<span id="my-stat-all">0</span>)
                 </button>
-                <button onclick="filterMyPRs('pending', this)" class="my-pill px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200">
-                    🔍 In Review (<span id="my-stat-pending">0</span>)
+                <button onclick="filterMyBatches('AGC & Graphics', this)" class="my-pill px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200">
+                    🎮 AGC & Graphics (<span id="my-stat-agc">0</span>)
                 </button>
-                <button onclick="filterMyPRs('approved', this)" class="my-pill px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200">
-                    ✅ Approved (<span id="my-stat-approved">0</span>)
+                <button onclick="filterMyBatches('PRX High-Level Modules', this)" class="my-pill px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200">
+                    📦 PRX Modules (<span id="my-stat-prx">0</span>)
                 </button>
-                <button onclick="filterMyPRs('changes', this)" class="my-pill px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200">
-                    ⚠️ Request Changes (<span id="my-stat-changes">0</span>)
-                </button>
-                <button onclick="filterMyPRs('ready', this)" class="my-pill px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200">
-                    🚀 Ready to Merge (<span id="my-stat-ready">0</span>)
+                <button onclick="filterMyBatches('Kernel & Syscalls', this)" class="my-pill px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200">
+                    🧠 Kernel & Syscalls (<span id="my-stat-kernel">0</span>)
                 </button>
             </div>
 
-            <!-- List of My Assigned PRs -->
-            <div id="my-prs-container" class="space-y-3.5">
-                <!-- Dynamically rendered by app.js -->
+            <!-- List of My Claimed Batches -->
+            <div id="my-prs-container" class="space-y-4">
+                <!-- Dynamically rendered by app.js as claimed batch cards -->
             </div>
 
-            <!-- Empty State (Shown if no PRs assigned) -->
+            <!-- Empty State (Shown if no batches assigned) -->
             <div id="my-prs-empty" class="hidden p-8 sm:p-12 text-center rounded-2xl bg-darkpanel border border-slate-800/80 space-y-4">
-                <div class="text-4xl sm:text-5xl">📭</div>
+                <div class="text-4xl sm:text-5xl">📦</div>
                 <div class="space-y-1">
-                    <h3 class="text-base sm:text-lg font-bold text-slate-200">No PRs currently assigned</h3>
+                    <h3 class="text-base sm:text-lg font-bold text-slate-200">No batches currently claimed</h3>
                     <p class="text-xs sm:text-sm text-slate-400 max-w-md mx-auto">
-                        Your review queue is empty. Click the button below to claim PRs from the database.
+                        To guarantee zero file collisions, PRs must be claimed as batches. Select a conflict-free minibatch from the studio to start reviewing.
                     </p>
                 </div>
                 <div class="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-2">
-                    <button onclick="quickClaimSafeBatch(5)" class="w-full sm:w-auto px-4 py-2 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800 text-xs font-semibold rounded-xl transition">
-                        🟢 Claim 5 Safe Quick-Merge PRs
+                    <button onclick="quickClaimSafeBatch()" class="w-full sm:w-auto px-4 py-2 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800 text-xs font-semibold rounded-xl transition cursor-pointer">
+                        🟢 Claim Safe Quick-Merge Batch
                     </button>
-                    <button onclick="openClaimModal()" class="w-full sm:w-auto px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold rounded-xl transition shadow-md shadow-cyan-600/30">
-                        ➕ Select from repository...
+                    <button onclick="switchMainView('batches')" class="w-full sm:w-auto px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold rounded-xl transition shadow-md shadow-cyan-600/30 cursor-pointer">
+                        ⚡ Browse Minibatch Studio &rarr;
                     </button>
                 </div>
             </div>
@@ -347,16 +344,30 @@
                     <h2 class="text-base font-bold text-slate-100 flex items-center gap-2">
                         <span>🌐</span> All open PRs in repository (<span id="repo-count-title">808</span>)
                     </h2>
-                    <p class="text-xs text-slate-400">Browse all open pull requests with search, filter, and claim tools.</p>
+                    <p class="text-xs text-slate-400">Browse all open pull requests. To avoid merge collisions, PRs must be claimed via conflict-free minibatches.</p>
                 </div>
                 <div class="flex items-center gap-2 w-full sm:w-auto">
-                    <button onclick="quickClaimSafeBatch(5)" class="flex-1 sm:flex-initial px-3 py-1.5 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800 text-xs font-semibold rounded-lg transition text-center whitespace-nowrap">
-                        🚀 Claim 5 Safe PRs
+                    <button onclick="quickClaimSafeBatch()" class="flex-1 sm:flex-initial px-3 py-1.5 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800 text-xs font-semibold rounded-lg transition text-center whitespace-nowrap cursor-pointer">
+                        🚀 Claim Safe Batch
                     </button>
-                    <button onclick="switchMainView('mine')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-medium rounded-lg transition whitespace-nowrap">
-                        &larr; My PRs
+                    <button onclick="switchMainView('mine')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-medium rounded-lg transition whitespace-nowrap cursor-pointer">
+                        &larr; My Batches
                     </button>
                 </div>
+            </div>
+
+            <!-- Batch-Only Workflow Enforced Notice Banner -->
+            <div class="p-3 sm:p-3.5 rounded-xl bg-blue-950/40 border border-blue-800/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs shadow-inner">
+                <div class="flex items-center gap-2.5">
+                    <span class="text-lg">🛡️</span>
+                    <div>
+                        <span class="font-bold text-cyan-300">Batch-Only Workflow Enforced:</span>
+                        <span class="text-slate-300 text-[11px] block sm:inline sm:ml-1">Individual PR claiming is disabled to prevent file collisions. Click any PR's batch badge to jump directly to its conflict-free minibatch.</span>
+                    </div>
+                </div>
+                <button onclick="switchMainView('batches')" class="px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-[11px] font-bold whitespace-nowrap shadow-sm cursor-pointer transition">
+                    Open Minibatch Studio &rarr;
+                </button>
             </div>
 
             <!-- Repo Filter Bar -->
@@ -574,6 +585,9 @@
                         <span id="inspect-pr-num" class="font-mono font-bold text-cyan-400 text-base sm:text-lg">#0000</span>
                         <div id="inspect-pr-cat"></div>
                         <div id="inspect-pr-risk"></div>
+                        <button id="inspect-parent-batch-pill" onclick="jumpToParentBatchFromInspect()" class="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-950 border border-cyan-800 text-cyan-300 flex items-center gap-1 hover:border-cyan-400 transition cursor-pointer" title="View parent batch in Minibatch Studio">
+                            <span>📦</span> <span id="inspect-parent-batch-pill-text">Batch #...</span>
+                        </button>
                         <span id="inspect-github-live-badge" class="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-900 border border-slate-700 text-slate-300 flex items-center gap-1">
                             <span class="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"></span>
                             <span id="inspect-github-live-text">GitHub API: checking...</span>
@@ -741,8 +755,8 @@
                 <div class="flex items-center gap-2 flex-wrap">
                     <!-- Actions for Maintainer -->
                     <div id="inspect-footer-maintainer-btns" class="flex items-center gap-2">
-                        <button onclick="unassignCurrentPR()" class="px-3 py-1.5 bg-rose-950/60 hover:bg-rose-900 text-rose-300 border border-rose-800/80 rounded-lg text-xs font-medium transition cursor-pointer">
-                            Return to Repo
+                        <button id="inspect-parent-batch-btn" onclick="jumpToParentBatchFromInspect()" class="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-slate-700 rounded-lg text-xs font-mono font-medium transition cursor-pointer flex items-center gap-1.5">
+                            <span>📦</span> <span id="inspect-parent-batch-title">Parent Batch</span>
                         </button>
                         <button onclick="saveInspectionAndClose()" class="px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-bold shadow-md shadow-cyan-600/30 transition cursor-pointer">
                             Save & Close
