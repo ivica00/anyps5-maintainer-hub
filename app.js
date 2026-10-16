@@ -1627,6 +1627,23 @@ function openInspectModal(prNumber) {
                 if (textEl) textEl.innerText = `GitHub: #${pr.number}`;
                 return;
             }
+
+            // Auto-heal diff statistics if zero in database
+            if ((pr.additions === 0 && pr.deletions === 0) && (liveData.additions > 0 || liveData.deletions > 0)) {
+                pr.additions = liveData.additions || 0;
+                pr.deletions = liveData.deletions || 0;
+                pr.totalLines = pr.additions + pr.deletions;
+                pr.fileCount = liveData.changed_files || pr.fileCount || 1;
+                updatePRInSupabase(pr.number, {
+                    additions: pr.additions,
+                    deletions: pr.deletions,
+                    total_lines: pr.totalLines,
+                    file_count: pr.fileCount
+                });
+                renderRepoTable();
+                renderMinibatches();
+                renderMyPRs();
+            }
             if (liveData.merged) {
                 liveBadge.className = 'px-2 py-0.5 rounded text-[10px] font-mono bg-purple-950 border border-purple-700 text-purple-300 flex items-center gap-1';
                 liveBadge.innerHTML = '🟣 <span>GitHub: Merged</span>';
