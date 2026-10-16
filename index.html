@@ -92,12 +92,15 @@
                     </div>
 
                     <!-- View Switcher Tabs -->
-                    <div class="flex p-0.5 bg-slate-900 border border-slate-800 rounded-lg text-xs font-medium w-full sm:w-auto justify-center">
-                        <button id="view-tab-mine" onclick="switchMainView('mine')" class="tab-btn active flex-1 sm:flex-initial px-3 py-1.5 rounded-md transition flex items-center justify-center gap-1.5 border border-transparent whitespace-nowrap">
+                    <div class="flex p-0.5 bg-slate-900 border border-slate-800 rounded-lg text-xs font-medium w-full sm:w-auto justify-center flex-wrap sm:flex-nowrap gap-0.5">
+                        <button id="view-tab-mine" onclick="switchMainView('mine')" class="tab-btn active flex-1 sm:flex-initial px-2.5 sm:px-3 py-1.5 rounded-md transition flex items-center justify-center gap-1.5 border border-transparent whitespace-nowrap">
                             <span>👤</span> Moji PR-ovi (<span id="my-pr-count-badge">0</span>)
                         </button>
-                        <button id="view-tab-repo" onclick="switchMainView('repo')" class="tab-btn flex-1 sm:flex-initial px-3 py-1.5 rounded-md transition text-slate-400 hover:text-slate-200 border border-transparent flex items-center justify-center gap-1.5 whitespace-nowrap">
-                            <span>🌐</span> Cijeli repozitorij (<span id="repo-total-count-badge">808</span>)
+                        <button id="view-tab-batches" onclick="switchMainView('batches')" class="tab-btn flex-1 sm:flex-initial px-2.5 sm:px-3 py-1.5 rounded-md transition text-slate-400 hover:text-slate-200 border border-transparent flex items-center justify-center gap-1.5 whitespace-nowrap">
+                            <span>⚡</span> Minibatches (<span id="batches-count-badge">0</span>)
+                        </button>
+                        <button id="view-tab-repo" onclick="switchMainView('repo')" class="tab-btn flex-1 sm:flex-initial px-2.5 sm:px-3 py-1.5 rounded-md transition text-slate-400 hover:text-slate-200 border border-transparent flex items-center justify-center gap-1.5 whitespace-nowrap">
+                            <span>🌐</span> Cijeli repo (<span id="repo-total-count-badge">808</span>)
                         </button>
                     </div>
                 </div>
@@ -177,7 +180,66 @@
         </section>
 
 
-        <!-- ================= VIEW 2: CIJELI REPOZITORIJ (SEKUNDARNI TAB) ================= -->
+        <!-- ================= VIEW 2: MINIBATCH STUDIO ================= -->
+        <section id="view-batches-section" class="hidden space-y-4">
+            <!-- Studio Header -->
+            <div class="p-4 sm:p-5 rounded-xl bg-cardbg border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-md">
+                <div class="space-y-1">
+                    <h2 class="text-base sm:text-lg font-bold text-slate-100 flex items-center gap-2">
+                        <span>⚡</span> Minibatch Studio (Automatizirani Conflict-Free Paketi)
+                    </h2>
+                    <p class="text-xs text-slate-400 max-w-2xl">
+                        Algoritam stvara optimalne pakete (od 1 do 10 PR-ova) ovisno o kompleksnosti i podsustavu. 
+                        <strong>100% garancija disjunktnih datoteka:</strong> PR-ovi unutar istog batcha nikada ne diraju iste datoteke!
+                    </p>
+                </div>
+                <div class="flex items-center gap-2 w-full sm:w-auto">
+                    <button onclick="regenerateMinibatches()" class="px-3 py-1.5 bg-cyan-950 hover:bg-cyan-900 text-cyan-300 border border-cyan-800 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 whitespace-nowrap">
+                        <span>🔄</span> Regeneriraj batcheve
+                    </button>
+                </div>
+            </div>
+
+            <!-- Minibatch Filters -->
+            <div class="p-3 rounded-xl bg-darkpanel border border-slate-800 flex flex-wrap items-center gap-2 text-xs">
+                <!-- Filter po kategoriji -->
+                <div class="flex items-center gap-1">
+                    <span class="text-slate-400">Podsustav:</span>
+                    <select id="batch-cat-filter" onchange="renderMinibatches()" class="bg-slate-900 border border-slate-700 text-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-cyan-500 text-xs">
+                        <option value="all">Svi podsustavi</option>
+                        <option value="AGC & Graphics">AGC & Grafika</option>
+                        <option value="PRX High-Level Modules">PRX Moduli</option>
+                        <option value="Kernel & Syscalls">Kernel & Syscalls</option>
+                        <option value="Shader & Relinker">Shader & Relinker</option>
+                        <option value="LibC & Base Runtime">LibC & Runtime</option>
+                        <option value="Build & Tooling">Build & Tooling</option>
+                    </select>
+                </div>
+
+                <!-- Filter po kompleksnosti -->
+                <div class="flex items-center gap-1">
+                    <span class="text-slate-400">Kompleksnost:</span>
+                    <select id="batch-tier-filter" onchange="renderMinibatches()" class="bg-slate-900 border border-slate-700 text-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-cyan-500 text-xs">
+                        <option value="all">Sve kompleksnosti</option>
+                        <option value="low">🟢 Lagano (7-10 PR-ova u batchu)</option>
+                        <option value="medium">🟡 Srednje (4-6 PR-ova u batchu)</option>
+                        <option value="high">🔴 Kompleksno (1-2 PR-a u batchu)</option>
+                    </select>
+                </div>
+
+                <div class="ml-auto text-[11px] text-slate-500">
+                    Prikazano: <strong id="batches-visible-count" class="text-cyan-400 font-mono">0</strong> paketa
+                </div>
+            </div>
+
+            <!-- Minibatches Container (Grid of cards) -->
+            <div id="minibatches-container" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <!-- Rendered dynamically by app.js -->
+            </div>
+        </section>
+
+
+        <!-- ================= VIEW 3: CIJELI REPOZITORIJ (SEKUNDARNI TAB) ================= -->
         <section id="view-repo-section" class="hidden space-y-4">
             <div class="p-4 rounded-xl bg-cardbg border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                 <div>
@@ -434,6 +496,33 @@
                     </button>
                     <button onclick="saveInspectionAndClose()" class="px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-bold shadow-md shadow-cyan-600/30 transition">
                         Spremi i zatvori
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= MODAL: BATCH CLI MERGE SCRIPT PREVIEW ================= -->
+    <div id="batch-script-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-3 sm:p-4">
+        <div class="bg-cardbg border border-slate-700 rounded-2xl max-w-xl w-full p-4 sm:p-5 shadow-2xl space-y-3">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-2.5">
+                <h3 class="text-sm font-bold text-slate-100 flex items-center gap-1.5">
+                    <span>⚡</span> <span id="batch-script-title">Merge Skripta</span>
+                </h3>
+                <button onclick="closeBatchScriptModal()" class="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800">✕</button>
+            </div>
+            <p class="text-xs text-slate-400">
+                Ova skripta sekvencijalno spaja sve odabrane PR-ove iz ovog batcha. Budući da su datoteke disjunktne, spajanje prolazi 100% bez međusobnih konflikata!
+            </p>
+            <textarea id="batch-script-textarea" rows="8" readonly class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-[11px] text-cyan-300 focus:outline-none"></textarea>
+            <div class="flex items-center justify-between pt-1">
+                <span class="text-[11px] text-slate-500">Kopirajte i pokrenite u terminalu s <code class="text-slate-400 font-mono">gh</code> CLI.</span>
+                <div class="flex gap-2">
+                    <button onclick="closeBatchScriptModal()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 rounded-lg border border-slate-700">
+                        Zatvori
+                    </button>
+                    <button onclick="copyBatchScriptText()" class="px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-xs font-bold text-white rounded-lg shadow-md shadow-cyan-600/30">
+                        Kopiraj skriptu
                     </button>
                 </div>
             </div>

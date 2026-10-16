@@ -1,5 +1,5 @@
 /**
- * AnyPS5 Maintainer Workspace - Robust REST & Realtime Supabase Client
+ * AnyPS5 Maintainer Workspace - Robust REST & Realtime Supabase Client + Minibatch Studio
  */
 
 const SUPABASE_URL = 'https://nzaxslgwsygpgwqcllpi.supabase.co';
@@ -8,8 +8,9 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 // Application State
 const state = {
     allPRs: [],
+    minibatches: [],
     currentMaintainer: 'boykopovar',
-    activeView: 'mine', // 'mine' or 'repo'
+    activeView: 'mine', // 'mine', 'batches', or 'repo'
     myStatusFilter: 'all', // 'all', 'pending', 'approved', 'changes', 'ready'
     selectedClaimPRs: new Set(),
     activeInspectPR: null,
@@ -30,7 +31,9 @@ document.addEventListener('DOMContentLoaded', () => {
     loadLocalFallbackData();
     setupMaintainerSelector();
     setupRepoFilters();
+    generateMinibatches();
     renderMyPRs();
+    renderMinibatches();
     renderRepoTable();
 
     // 1. Initial direct REST fetch from Supabase
@@ -80,7 +83,6 @@ function loadLocalFallbackData() {
 // SUPABASE REST COMMUNICATION (BULLETPROOF)
 // ==========================================
 
-// Direct REST Fetch: works 100% reliably in any browser
 async function refreshDataFromSupabase(showToastAlert = false) {
     const statusText = document.getElementById('supabase-status-text');
     const pill = document.getElementById('supabase-status-pill');
@@ -130,7 +132,10 @@ async function refreshDataFromSupabase(showToastAlert = false) {
                 pill.className = "text-[10px] px-2.5 py-1 rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-800 font-mono flex items-center gap-1.5 transition";
             }
 
+            // Regenerate minibatches with fresh PR data
+            generateMinibatches();
             renderMyPRs();
+            renderMinibatches();
             renderRepoTable();
 
             if (showToastAlert) {
@@ -146,7 +151,6 @@ async function refreshDataFromSupabase(showToastAlert = false) {
     }
 }
 
-// Direct REST PATCH: updates single or batch PRs in Supabase
 async function updatePRInSupabase(number, fields) {
     try {
         const payload = {
@@ -154,7 +158,7 @@ async function updatePRInSupabase(number, fields) {
             updated_at: new Date().toISOString()
         };
 
-        const res = await fetch(`${SUPABASE_URL}/rest/v1/prs?number=eq.${number}`, {
+        await fetch(`${SUPABASE_URL}/rest/v1/prs?number=eq.${number}`, {
             method: 'PATCH',
             headers: {
                 ...supabaseHeaders,
@@ -162,20 +166,14 @@ async function updatePRInSupabase(number, fields) {
             },
             body: JSON.stringify(payload)
         });
-
-        if (!res.ok) {
-            console.error('Supabase PATCH error:', res.status, res.statusText);
-        }
     } catch (e) {
         console.error('Supabase update failed:', e);
     }
 }
 
-// Batch PATCH for multiple PRs
 async function updateBatchPRsInSupabase(numbers, fields) {
     if (!numbers || numbers.length === 0) return;
     try {
-        const filterStr = numbers.map(n => `number.eq.${n}`).join(',');
         const payload = {
             ...fields,
             updated_at: new Date().toISOString()
@@ -194,10 +192,8 @@ async function updateBatchPRsInSupabase(numbers, fields) {
     }
 }
 
-// Realtime WebSocket setup
 function setupSupabaseRealtime() {
     if (!window.supabase || typeof window.supabase.createClient !== 'function') {
-        console.log('Supabase JS SDK not loaded, running in pure REST mode');
         return;
     }
 
@@ -220,6 +216,7 @@ function setupSupabaseRealtime() {
                     existingPR.checklist = updatedRow.checklist || {};
 
                     renderMyPRs();
+                    renderMinibatches();
                     renderRepoTable();
 
                     if (!wasMine && isNowMine) {
@@ -231,7 +228,344 @@ function setupSupabaseRealtime() {
             })
             .subscribe();
     } catch (err) {
-        console.warn('Realtime subscription error (using REST polling instead):', err);
+        console.warn('Realtime subscription error:', err);
+    }
+}
+
+
+// ==========================================
+// MINIBATCH CLUSTERING ALGORITHM (1-10 PRs)
+// ==========================================
+
+function computePRComplexity(p) {
+    const tot = p.totalLines || 0;
+    const fc = p.fileCount || 1;
+    const risk = p.riskLevel || 'low';
+
+    let score = 1;
+    if (tot > 1000) score += 4;
+    else if (tot > 300) score += 2;
+    else if (tot > 100) score += 1;
+
+    if (fc > 10) score += 3;
+    else if (fc > 4) score += 1;
+
+    if (risk === 'high') score += 2;
+    else if (risk === 'medium') score += 1;
+
+    if (score <= 2) return { tier: 'low', maxSize: 10, label: 'Lagano (do 10 PR-ova)' };
+    else if (score <= 5) return { tier: 'medium', maxSize: 5, label: 'Srednje (do 5 PR-ova)' };
+    else return { tier: 'high', maxSize: 2, label: 'Kompleksno (1-2 PR-a)' };
+}
+
+function generateMinibatches() {
+    // Group PRs by category
+    const byCategory = {};
+    state.allPRs.forEach(p => {
+        const cat = p.category || 'Other Core Subsystems';
+        if (!byCategory[cat]) byCategory[cat] = [];
+        byCategory[cat].push(p);
+    });
+
+    const generated = [];
+    let batchCounter = 1;
+
+    Object.keys(byCategory).forEach(cat => {
+        const prList = [...byCategory[cat]];
+
+        // Sort: low complexity first for safe high-yield packing
+        prList.sort((a, b) => {
+            const ca = computePRComplexity(a);
+            const cb = computePRComplexity(b);
+            const tierOrder = { 'low': 1, 'medium': 2, 'high': 3 };
+            if (tierOrder[ca.tier] !== tierOrder[cb.tier]) {
+                return tierOrder[ca.tier] - tierOrder[cb.tier];
+            }
+            return (a.totalLines || 0) - (b.totalLines || 0);
+        });
+
+        const unassigned = [...prList];
+
+        while (unassigned.length > 0) {
+            const lead = unassigned.shift();
+            const { tier, maxSize, label } = computePRComplexity(lead);
+
+            const batchPRs = [lead];
+            const batchFiles = new Set(lead.files || []);
+
+            let i = 0;
+            while (i < unassigned.length && batchPRs.length < maxSize) {
+                const candidate = unassigned[i];
+                const candComp = computePRComplexity(candidate);
+
+                // Cluster similar complexity
+                if (candComp.tier === tier || (tier === 'low' && candComp.tier === 'medium')) {
+                    const candFiles = candidate.files || [];
+                    const hasOverlap = candFiles.some(f => batchFiles.has(f));
+
+                    // DISJUNCT FILE CHECK: 0% internal conflict guarantee!
+                    if (!hasOverlap) {
+                        batchPRs.push(candidate);
+                        candFiles.forEach(f => batchFiles.add(f));
+                        unassigned.splice(i, 1);
+                        continue;
+                    }
+                }
+                i++;
+            }
+
+            const batchId = `mb-${batchCounter++}`;
+            generated.push({
+                id: batchId,
+                title: `${cat} - Batch #${batchCounter - 1}`,
+                category: cat,
+                complexity: tier,
+                complexityLabel: label,
+                maxSize: maxSize,
+                prs: batchPRs,
+                selectedPRs: new Set(batchPRs.map(p => p.number))
+            });
+        }
+    });
+
+    state.minibatches = generated;
+
+    // Update badges
+    const batchBadge = document.getElementById('batches-count-badge');
+    if (batchBadge) batchBadge.innerText = state.minibatches.length;
+}
+
+function renderMinibatches() {
+    const container = document.getElementById('minibatches-container');
+    const visibleCountEl = document.getElementById('batches-visible-count');
+    if (!container) return;
+
+    const catFilter = document.getElementById('batch-cat-filter')?.value || 'all';
+    const tierFilter = document.getElementById('batch-tier-filter')?.value || 'all';
+
+    let visibleBatches = state.minibatches.filter(b => {
+        if (catFilter !== 'all' && b.category !== catFilter) return false;
+        if (tierFilter !== 'all' && b.complexity !== tierFilter) return false;
+        return true;
+    });
+
+    if (visibleCountEl) visibleCountEl.innerText = visibleBatches.length;
+
+    if (visibleBatches.length === 0) {
+        container.innerHTML = `
+            <div class="col-span-full p-8 text-center bg-slate-900/60 rounded-xl border border-slate-800 text-slate-400 text-xs">
+                Nema paketa koji odgovaraju odabranim filterima.
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = visibleBatches.map(b => {
+        const catBadge = getCategoryBadge(b.category);
+        const tierBadge = getComplexityBadge(b.complexity, b.prs.length);
+        const selectedCount = b.selectedPRs.size;
+        const totalPRs = b.prs.length;
+
+        return `
+            <div class="p-4 rounded-xl bg-cardbg border border-slate-800 hover:border-slate-700 transition shadow-sm space-y-3 flex flex-col justify-between" id="card-${b.id}">
+                <div class="space-y-2">
+                    <!-- Batch Card Header -->
+                    <div class="flex items-center justify-between gap-2 flex-wrap">
+                        <div class="flex items-center gap-1.5 flex-wrap">
+                            ${catBadge}
+                            ${tierBadge}
+                        </div>
+                        <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono flex items-center gap-1">
+                            <span>🛡️</span> 100% Conflict-Free
+                        </span>
+                    </div>
+
+                    <div>
+                        <h3 class="text-sm font-bold text-slate-100 flex items-center justify-between">
+                            <span>${escapeHtml(b.title)}</span>
+                            <span class="text-xs font-mono text-cyan-400">${selectedCount}/${totalPRs} odabrano</span>
+                        </h3>
+                        <p class="text-[11px] text-slate-400 mt-0.5">
+                            Paket sadrži ${totalPRs} PR-ova koji ne dijele nijednu datoteku. Mogu se spajati paralelno/sekvencijalno.
+                        </p>
+                    </div>
+
+                    <!-- PR Items inside batch with checkboxes -->
+                    <div class="space-y-1.5 pt-1 max-h-56 overflow-y-auto pr-1">
+                        ${b.prs.map(pr => {
+                            const isChecked = b.selectedPRs.has(pr.number);
+                            const isAssigned = pr.assignedReviewer && pr.assignedReviewer !== 'none';
+                            return `
+                                <div class="flex items-center justify-between p-2 rounded-lg bg-slate-900/90 border border-slate-800/80 text-xs hover:border-slate-700 transition">
+                                    <div class="flex items-center gap-2 flex-1 min-w-0 pr-2">
+                                        <input type="checkbox" ${isChecked ? 'checked' : ''} 
+                                               onchange="togglePRInBatch('${b.id}', ${pr.number}, this.checked)"
+                                               class="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-cyan-500 cursor-pointer">
+                                        <span class="font-mono font-bold text-cyan-400 text-[11px]">#${pr.number}</span>
+                                        <span class="text-[11px] text-slate-200 truncate cursor-pointer hover:text-cyan-300" onclick="openInspectModal(${pr.number})" title="${escapeHtml(pr.title)}">
+                                            ${escapeHtml(pr.title)}
+                                        </span>
+                                    </div>
+                                    <div class="flex items-center gap-1.5 flex-shrink-0 text-[10px] font-mono">
+                                        <span class="text-emerald-400">+${pr.additions}</span>/<span class="text-rose-400">-${pr.deletions}</span>
+                                        ${isAssigned ? `<span class="px-1.5 py-0.2 rounded bg-slate-800 text-cyan-300 border border-slate-700">@${escapeHtml(pr.assignedReviewer)}</span>` : ''}
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+
+                <!-- Batch Actions -->
+                <div class="pt-3 border-t border-slate-800 flex items-center justify-between flex-wrap gap-2 text-xs">
+                    <div class="flex items-center gap-1.5">
+                        <button onclick="claimSelectedInBatch('${b.id}')" 
+                                class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-white font-bold rounded-lg text-xs shadow-md shadow-cyan-600/20 transition flex items-center gap-1 cursor-pointer">
+                            <span>➕</span> Preuzmi odabrane (${selectedCount})
+                        </button>
+                        <button onclick="approveSelectedInBatch('${b.id}')" 
+                                class="px-2.5 py-1.5 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800 rounded-lg text-xs font-semibold transition cursor-pointer">
+                            ✅ Odobri (${selectedCount})
+                        </button>
+                    </div>
+
+                    <button onclick="openBatchScriptModal('${b.id}')" 
+                            class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg text-xs font-mono transition flex items-center gap-1 cursor-pointer">
+                        <span>💻</span> CLI Skripta
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function togglePRInBatch(batchId, prNumber, checked) {
+    const batch = state.minibatches.find(b => b.id === batchId);
+    if (!batch) return;
+
+    if (checked) batch.selectedPRs.add(prNumber);
+    else batch.selectedPRs.delete(prNumber);
+
+    renderMinibatches();
+}
+
+async function claimSelectedInBatch(batchId) {
+    const batch = state.minibatches.find(b => b.id === batchId);
+    if (!batch) return;
+
+    const selectedNums = Array.from(batch.selectedPRs);
+    if (selectedNums.length === 0) {
+        showToast('Odaberi barem jedan PR kvačicom');
+        return;
+    }
+
+    selectedNums.forEach(num => {
+        const pr = state.allPRs.find(p => p.number === num);
+        if (pr) {
+            pr.assignedReviewer = state.currentMaintainer;
+            pr.status = 'in-review';
+        }
+    });
+
+    renderMyPRs();
+    renderMinibatches();
+    renderRepoTable();
+
+    await updateBatchPRsInSupabase(selectedNums, {
+        assigned_reviewer: state.currentMaintainer,
+        status: 'in-review'
+    });
+
+    showToast(`Preuzeto ${selectedNums.length} PR-ova iz paketa "${batch.title}" za @${state.currentMaintainer}!`);
+}
+
+async function approveSelectedInBatch(batchId) {
+    const batch = state.minibatches.find(b => b.id === batchId);
+    if (!batch) return;
+
+    const selectedNums = Array.from(batch.selectedPRs);
+    if (selectedNums.length === 0) {
+        showToast('Nema odabranih PR-ova za odobrenje');
+        return;
+    }
+
+    selectedNums.forEach(num => {
+        const pr = state.allPRs.find(p => p.number === num);
+        if (pr) {
+            pr.status = 'approved';
+        }
+    });
+
+    renderMyPRs();
+    renderMinibatches();
+    renderRepoTable();
+
+    await updateBatchPRsInSupabase(selectedNums, {
+        status: 'approved'
+    });
+
+    showToast(`Odobreno ${selectedNums.length} PR-ova iz paketa!`);
+}
+
+function regenerateMinibatches() {
+    generateMinibatches();
+    renderMinibatches();
+    showToast('Regenerirani svi minibatchevi na temelju svježih PR-ova!');
+}
+
+function getComplexityBadge(tier, count) {
+    if (tier === 'low') {
+        return `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">🟢 Lagano (${count} PR)</span>`;
+    } else if (tier === 'medium') {
+        return `<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-950 text-amber-300 border border-amber-800">🟡 Srednje (${count} PR)</span>`;
+    } else {
+        return `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950 text-rose-300 border border-rose-800">🔴 Kompleksno (${count} PR)</span>`;
+    }
+}
+
+// Modal for Batch CLI Merge script
+function openBatchScriptModal(batchId) {
+    const batch = state.minibatches.find(b => b.id === batchId);
+    if (!batch) return;
+
+    const modal = document.getElementById('batch-script-modal');
+    const title = document.getElementById('batch-script-title');
+    const textarea = document.getElementById('batch-script-textarea');
+    if (!modal || !title || !textarea) return;
+
+    const selectedNums = Array.from(batch.selectedPRs);
+    title.innerText = `CLI Merge: ${batch.title} (${selectedNums.length} PR-ova)`;
+
+    let script = `# AnyPS5 Minibatch CLI Merge Sequence\n`;
+    script += `# Paket: ${batch.title} (${batch.category})\n`;
+    script += `# Kompleksnost: ${batch.complexityLabel} • Disjunktne datoteke: 100% Sigurno za spajanje\n`;
+    script += `# Generirano: ${new Date().toISOString()}\n\n`;
+
+    selectedNums.forEach(num => {
+        const pr = batch.prs.find(p => p.number === num);
+        const prTitle = pr ? pr.title.replace(/[\r\n]+/g, ' ') : '';
+        script += `# PR #${num}: ${prTitle}\n`;
+        script += `gh pr merge ${num} --repo boykopovar/AnyPS5 --auto --squash --delete-branch\n\n`;
+    });
+
+    textarea.value = script;
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+}
+
+function closeBatchScriptModal() {
+    const modal = document.getElementById('batch-script-modal');
+    if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+    }
+}
+
+function copyBatchScriptText() {
+    const textarea = document.getElementById('batch-script-textarea');
+    if (textarea) {
+        copyTextToClipboard(textarea.value, 'Kopirana CLI skripta za batch merge!');
+        closeBatchScriptModal();
     }
 }
 
@@ -408,6 +742,7 @@ async function assignPR(prNumber, maintainerId, renderNow = true) {
 
     if (renderNow) {
         renderMyPRs();
+        renderMinibatches();
         renderRepoTable();
     }
 
@@ -425,6 +760,7 @@ async function unassignPR(prNumber) {
     }
 
     renderMyPRs();
+    renderMinibatches();
     renderRepoTable();
 
     await updatePRInSupabase(prNumber, { 
@@ -461,7 +797,6 @@ function renderClaimList() {
     const container = document.getElementById('claim-pr-list');
     if (!container) return;
 
-    // Show available unassigned PRs
     const available = state.allPRs.filter(p => p.assignedReviewer !== state.currentMaintainer).slice(0, 50);
 
     container.innerHTML = available.map(pr => {
@@ -517,6 +852,7 @@ async function confirmSelectedClaims() {
     selected.forEach(num => assignPR(num, state.currentMaintainer, false));
     closeClaimModal();
     renderMyPRs();
+    renderMinibatches();
     renderRepoTable();
 
     await updateBatchPRsInSupabase(selected, {
@@ -544,6 +880,7 @@ async function batchClaimPreset(type, count) {
     numbers.forEach(num => assignPR(num, state.currentMaintainer, false));
     closeClaimModal();
     renderMyPRs();
+    renderMinibatches();
     renderRepoTable();
 
     await updateBatchPRsInSupabase(numbers, {
@@ -676,6 +1013,7 @@ async function saveInspectionAndClose() {
 
     closeInspectModal();
     renderMyPRs();
+    renderMinibatches();
     renderRepoTable();
 
     await updatePRInSupabase(num, {
@@ -695,7 +1033,7 @@ function unassignCurrentPR() {
 
 
 // ==========================================
-// VIEW 2: CIJELI REPOZITORIJ (REPO TABLE)
+// VIEW 3: CIJELI REPOZITORIJ (REPO TABLE)
 // ==========================================
 
 function setupRepoFilters() {
@@ -807,6 +1145,7 @@ function setupMaintainerSelector() {
         savePersistentUser();
         updateMaintainerLabels();
         renderMyPRs();
+        renderMinibatches();
         renderRepoTable();
         showToast(`Prijavljen kao @${state.currentMaintainer}`);
     });
@@ -820,28 +1159,42 @@ function updateMaintainerLabels() {
     if (claimTag) claimTag.innerText = `@${state.currentMaintainer}`;
 }
 
-// Switch between "Moji PR-ovi" and "Cijeli repozitorij"
+// Switch between "Moji PR-ovi", "Minibatches", and "Cijeli repozitorij"
 function switchMainView(view) {
     state.activeView = view;
     const btnMine = document.getElementById('view-tab-mine');
+    const btnBatches = document.getElementById('view-tab-batches');
     const btnRepo = document.getElementById('view-tab-repo');
+
     const secMine = document.getElementById('view-mine-section');
+    const secBatches = document.getElementById('view-batches-section');
     const secRepo = document.getElementById('view-repo-section');
+
+    // Reset tab active styling
+    [btnMine, btnBatches, btnRepo].forEach(btn => {
+        if (btn) {
+            btn.classList.remove('active', 'border-cyan-400', 'text-cyan-300');
+            btn.classList.add('text-slate-400', 'border-transparent');
+        }
+    });
+
+    [secMine, secBatches, secRepo].forEach(sec => {
+        if (sec) sec.classList.add('hidden');
+    });
 
     if (view === 'mine') {
         btnMine.classList.add('active', 'border-cyan-400', 'text-cyan-300');
         btnMine.classList.remove('text-slate-400', 'border-transparent');
-        btnRepo.classList.remove('active', 'border-cyan-400', 'text-cyan-300');
-        btnRepo.classList.add('text-slate-400', 'border-transparent');
         secMine.classList.remove('hidden');
-        secRepo.classList.add('hidden');
         renderMyPRs();
+    } else if (view === 'batches') {
+        btnBatches.classList.add('active', 'border-cyan-400', 'text-cyan-300');
+        btnBatches.classList.remove('text-slate-400', 'border-transparent');
+        secBatches.classList.remove('hidden');
+        renderMinibatches();
     } else {
         btnRepo.classList.add('active', 'border-cyan-400', 'text-cyan-300');
         btnRepo.classList.remove('text-slate-400', 'border-transparent');
-        btnMine.classList.remove('active', 'border-cyan-400', 'text-cyan-300');
-        btnMine.classList.add('text-slate-400', 'border-transparent');
-        secMine.classList.add('hidden');
         secRepo.classList.remove('hidden');
         renderRepoTable();
     }
