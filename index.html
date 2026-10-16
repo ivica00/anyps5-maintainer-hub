@@ -203,51 +203,86 @@
                 </div>
             </div>
 
-            <!-- Minibatch Filters -->
-            <div class="p-3 rounded-xl bg-darkpanel border border-slate-800 flex flex-wrap items-center gap-2 text-xs">
-                <!-- Filter po kategoriji -->
-                <div class="flex items-center gap-1">
-                    <span class="text-slate-400">Podsustav:</span>
-                    <select id="batch-cat-filter" onchange="renderMinibatches()" class="bg-slate-900 border border-slate-700 text-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-cyan-500 text-xs">
-                        <option value="all">Svi podsustavi</option>
-                        <option value="AGC & Graphics">AGC & Grafika</option>
-                        <option value="PRX High-Level Modules">PRX Moduli</option>
-                        <option value="Kernel & Syscalls">Kernel & Syscalls</option>
-                        <option value="Shader & Relinker">Shader & Relinker</option>
-                        <option value="LibC & Base Runtime">LibC & Runtime</option>
-                        <option value="Build & Tooling">Build & Tooling</option>
-                    </select>
+            <!-- Minibatch Filters & Controls -->
+            <div class="p-3 rounded-xl bg-darkpanel border border-slate-800 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+                <div class="flex flex-wrap items-center gap-2">
+                    <!-- Brzo pretraživanje batcheva -->
+                    <div class="relative">
+                        <input type="text" id="batch-search-input" oninput="renderMinibatches()" placeholder="🔍 Pretraži paket, PR # ili datoteku..." class="bg-slate-900 border border-slate-700 text-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-cyan-500 text-xs w-48 sm:w-60 placeholder-slate-500">
+                    </div>
+
+                    <!-- Filter po kategoriji -->
+                    <div class="flex items-center gap-1">
+                        <span class="text-slate-400">Podsustav:</span>
+                        <select id="batch-cat-filter" onchange="renderMinibatches()" class="bg-slate-900 border border-slate-700 text-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-cyan-500 text-xs">
+                            <option value="all">Svi podsustavi</option>
+                            <option value="AGC & Graphics">AGC & Grafika</option>
+                            <option value="PRX High-Level Modules">PRX Moduli</option>
+                            <option value="Kernel & Syscalls">Kernel & Syscalls</option>
+                            <option value="Shader & Relinker">Shader & Relinker</option>
+                            <option value="LibC & Base Runtime">LibC & Runtime</option>
+                            <option value="Build & Tooling">Build & Tooling</option>
+                        </select>
+                    </div>
+
+                    <!-- Filter po kompleksnosti -->
+                    <div class="flex items-center gap-1">
+                        <span class="text-slate-400">Kompleksnost:</span>
+                        <select id="batch-tier-filter" onchange="renderMinibatches()" class="bg-slate-900 border border-slate-700 text-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-cyan-500 text-xs cursor-pointer">
+                            <option value="all">Sve kompleksnosti</option>
+                            <option value="low">🟢 Lagano (7-10 PR-ova)</option>
+                            <option value="medium">🟡 Srednje (4-6 PR-ova)</option>
+                            <option value="high">🔴 Kompleksno (1-2 PR-a)</option>
+                        </select>
+                    </div>
+
+                    <!-- Filter po statusu zaduženja -->
+                    <div class="flex items-center gap-1">
+                        <span class="text-slate-400">Dostupnost:</span>
+                        <select id="batch-status-filter" onchange="renderMinibatches()" class="bg-slate-900 border border-slate-700 text-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-cyan-500 text-xs cursor-pointer">
+                            <option value="all">Svi paketi</option>
+                            <option value="available" selected>🟢 Samo slobodni</option>
+                            <option value="mine">👤 Moji preuzeti</option>
+                            <option value="claimed">🔒 Preuzeto od drugih</option>
+                        </select>
+                    </div>
+
+                    <!-- Broj prikazanih paketa (50 batcheva) -->
+                    <div class="flex items-center gap-1">
+                        <span class="text-slate-400">Prikaz:</span>
+                        <select id="batch-limit-filter" onchange="renderMinibatches()" class="bg-slate-900 border border-slate-700 text-cyan-400 font-semibold rounded-lg px-2 py-1.5 focus:outline-none focus:border-cyan-500 text-xs cursor-pointer">
+                            <option value="50" selected>⚡ 50 paketa</option>
+                            <option value="100">100 paketa</option>
+                            <option value="all">Svi paketi (254)</option>
+                        </select>
+                    </div>
                 </div>
 
-                <!-- Filter po kompleksnosti -->
-                <div class="flex items-center gap-1">
-                    <span class="text-slate-400">Kompleksnost:</span>
-                    <select id="batch-tier-filter" onchange="renderMinibatches()" class="bg-slate-900 border border-slate-700 text-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-cyan-500 text-xs cursor-pointer">
-                        <option value="all">Sve kompleksnosti</option>
-                        <option value="low">🟢 Lagano (7-10 PR-ova)</option>
-                        <option value="medium">🟡 Srednje (4-6 PR-ova)</option>
-                        <option value="high">🔴 Kompleksno (1-2 PR-a)</option>
-                    </select>
-                </div>
+                <!-- Desne kontrole: Način prikaza & Expand/Collapse -->
+                <div class="flex items-center gap-2">
+                    <!-- Toggle Načina Prikaza: Kompaktno vs Kartice -->
+                    <div class="flex items-center bg-slate-900 border border-slate-700 rounded-lg p-0.5">
+                        <button id="btn-batch-view-compact" onclick="setBatchViewMode('compact')" class="px-2.5 py-1 rounded text-xs font-semibold transition text-cyan-300 bg-slate-800 shadow-sm" title="Kompaktni visoko-informacijski pregled">
+                            🗂️ Kompaktno
+                        </button>
+                        <button id="btn-batch-view-grid" onclick="setBatchViewMode('grid')" class="px-2.5 py-1 rounded text-xs font-medium transition text-slate-400 hover:text-slate-200" title="Mrežni pregled kartica">
+                            🃏 Kartice
+                        </button>
+                    </div>
 
-                <!-- Filter po statusu zaduženja -->
-                <div class="flex items-center gap-1">
-                    <span class="text-slate-400">Dostupnost:</span>
-                    <select id="batch-status-filter" onchange="renderMinibatches()" class="bg-slate-900 border border-slate-700 text-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-cyan-500 text-xs cursor-pointer">
-                        <option value="all">Svi paketi</option>
-                        <option value="available" selected>🟢 Samo slobodni paketi</option>
-                        <option value="mine">👤 Moji preuzeti paketi</option>
-                        <option value="claimed">🔒 Preuzeto od drugih</option>
-                    </select>
-                </div>
+                    <!-- Skupi/Proširi sve detalje -->
+                    <button id="btn-toggle-all-batches" onclick="toggleAllBatchesExpand()" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg text-xs font-medium transition whitespace-nowrap">
+                        ↕ Proširi sve
+                    </button>
 
-                <div class="ml-auto text-[11px] text-slate-500 whitespace-nowrap">
-                    Prikazano: <strong id="batches-visible-count" class="text-cyan-400 font-mono">0</strong> paketa
+                    <div class="text-[11px] text-slate-500 whitespace-nowrap pl-1">
+                        Prikazano: <strong id="batches-visible-count" class="text-cyan-400 font-mono">0</strong> paketa
+                    </div>
                 </div>
             </div>
 
-            <!-- Minibatches Container (Grid of cards) -->
-            <div id="minibatches-container" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <!-- Minibatches Container (Defaults to compact space-y-2) -->
+            <div id="minibatches-container" class="space-y-2">
                 <!-- Rendered dynamically by app.js -->
             </div>
         </section>
@@ -387,6 +422,10 @@
                         <span id="inspect-pr-num" class="font-mono font-bold text-cyan-400 text-base sm:text-lg">#0000</span>
                         <div id="inspect-pr-cat"></div>
                         <div id="inspect-pr-risk"></div>
+                        <span id="inspect-github-live-badge" class="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-900 border border-slate-700 text-slate-300 flex items-center gap-1">
+                            <span class="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"></span>
+                            <span id="inspect-github-live-text">GitHub API: provjera...</span>
+                        </span>
                     </div>
                     <h2 id="inspect-pr-title" class="text-sm sm:text-base font-bold text-slate-100 line-clamp-2">PR Title</h2>
                     <div class="text-[11px] sm:text-xs text-slate-400 flex items-center gap-2 flex-wrap">
@@ -511,20 +550,23 @@
                                   class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"></textarea>
                     </div>
 
-                    <!-- Community Reviewer Markdown Export Toolkit -->
+                    <!-- Community Reviewer Markdown Export & 1-Click API Submit Toolkit -->
                     <div id="reviewer-export-toolkit" class="p-2.5 rounded-lg bg-slate-950 border border-purple-900/40 space-y-2">
                         <div class="flex items-center justify-between">
                             <span class="text-[11px] font-semibold text-purple-300 flex items-center gap-1">
-                                <span>🐙</span> Generiranje recenzije za GitHub
+                                <span>🐙</span> GitHub API Recenzija
                             </span>
-                            <span class="text-[10px] text-slate-500">Spremno za komentar na PR-u</span>
+                            <span id="api-submit-status-pill" class="text-[10px] text-slate-400 font-mono">1-Klik slanje</span>
                         </div>
                         <div class="flex flex-wrap gap-2">
-                            <button onclick="copyGeneratedMarkdownReview()" class="flex-1 py-1.5 px-3 bg-purple-950 hover:bg-purple-900 text-purple-200 border border-purple-800 rounded-lg font-semibold text-[11px] transition flex items-center justify-center gap-1.5 cursor-pointer">
-                                <span>📋</span> Kopiraj gotov Markdown review
+                            <button onclick="postReviewToGitHubViaAPI()" id="btn-api-submit" class="flex-1 py-1.5 px-3 bg-gradient-to-r from-purple-700 to-indigo-600 hover:from-purple-600 hover:to-indigo-500 text-white font-bold rounded-lg text-[11px] shadow-md shadow-purple-600/20 transition flex items-center justify-center gap-1.5 cursor-pointer">
+                                <span>🚀</span> Objavi recenziju na GitHub (1-Klik API)
+                            </button>
+                            <button onclick="copyGeneratedMarkdownReview()" class="py-1.5 px-3 bg-slate-900 hover:bg-slate-800 text-purple-300 border border-purple-800/80 rounded-lg font-semibold text-[11px] transition flex items-center justify-center gap-1.5 cursor-pointer">
+                                <span>📋</span> Kopiraj Markdown
                             </button>
                             <a id="inspect-submit-review-btn" href="#" target="_blank" class="py-1.5 px-3 bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-slate-700 rounded-lg font-semibold text-[11px] transition flex items-center justify-center gap-1.5">
-                                <span>💬</span> Otvori PR na GitHubu
+                                <span>💬</span> Otvori na GitHubu
                             </a>
                         </div>
                     </div>
@@ -569,134 +611,177 @@
         </div>
     </div>
 
-    <!-- ================= MODAL: BATCH CLI MERGE / TEST SCRIPT PREVIEW ================= -->
+    <!-- ================= MODAL: BATCH CLI MERGE / TEST SCRIPT & AI PROMPT PREVIEW ================= -->
     <div id="batch-script-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-3 sm:p-4">
-        <div class="bg-cardbg border border-slate-700 rounded-2xl max-w-xl w-full p-4 sm:p-5 shadow-2xl space-y-3">
+        <div class="bg-cardbg border border-slate-700 rounded-2xl max-w-3xl w-full p-4 sm:p-5 shadow-2xl space-y-3">
             <div class="flex items-center justify-between border-b border-slate-800 pb-2.5">
                 <h3 class="text-sm font-bold text-slate-100 flex items-center gap-1.5">
-                    <span>⚡</span> <span id="batch-script-title">Merge Skripta</span>
+                    <span>⚡</span> <span id="batch-script-title">Paket Alati & Prompt Generator</span>
                 </h3>
                 <button onclick="closeBatchScriptModal()" class="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800">✕</button>
             </div>
+
+            <!-- Modal Sub-Tabs -->
+            <div class="flex items-center gap-1.5 border-b border-slate-800 pb-2 overflow-x-auto">
+                <button id="modal-tab-ai" onclick="switchBatchModalTab('ai-prompt')" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-cyan-950 text-cyan-300 border border-cyan-800 flex items-center gap-1.5 whitespace-nowrap">
+                    <span>🤖</span> AI Review Prompt (Claude / GPT / Gemini)
+                </button>
+                <button id="modal-tab-merge" onclick="switchBatchModalTab('merge')" class="px-3 py-1.5 rounded-lg text-xs font-medium transition text-slate-400 hover:text-slate-200 border border-transparent hover:bg-slate-800 flex items-center gap-1.5 whitespace-nowrap">
+                    <span>💻</span> CLI Merge (gh CLI)
+                </button>
+                <button id="modal-tab-test" onclick="switchBatchModalTab('test')" class="px-3 py-1.5 rounded-lg text-xs font-medium transition text-slate-400 hover:text-slate-200 border border-transparent hover:bg-slate-800 flex items-center gap-1.5 whitespace-nowrap">
+                    <span>🔍</span> CLI Test (Lokalno)
+                </button>
+            </div>
+
             <p id="batch-script-desc" class="text-xs text-slate-400">
-                Ova skripta sekvencijalno spaja sve odabrane PR-ove iz ovog batcha. Budući da su datoteke disjunktne, spajanje prolazi 100% bez međusobnih konflikata!
+                Ovaj deterministički prompt sadrži sve podatke o PR-ovima, disjunktnim datotekama i sigurnosnim provjerama za PlayStation 5 emulator.
             </p>
-            <textarea id="batch-script-textarea" rows="8" readonly class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-[11px] text-cyan-300 focus:outline-none"></textarea>
-            <div class="flex items-center justify-between pt-1">
-                <span id="batch-script-hint" class="text-[11px] text-slate-500">Kopirajte i pokrenite u terminalu s <code class="text-slate-400 font-mono">gh</code> CLI.</span>
+            <textarea id="batch-script-textarea" rows="12" readonly class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 font-mono text-[11px] text-cyan-300 focus:outline-none"></textarea>
+            
+            <div class="flex items-center justify-between pt-1 flex-wrap gap-2">
+                <span id="batch-script-hint" class="text-[11px] text-slate-500">100% deterministički prompt – zalijepite u Claude 3.7 Sonnet, ChatGPT ili Gemini.</span>
                 <div class="flex gap-2">
                     <button onclick="closeBatchScriptModal()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 rounded-lg border border-slate-700">
                         Zatvori
                     </button>
-                    <button onclick="copyBatchScriptText()" class="px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-xs font-bold text-white rounded-lg shadow-md shadow-cyan-600/30">
-                        Kopiraj skriptu
+                    <button id="batch-script-copy-btn" onclick="copyBatchScriptText()" class="px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-xs font-bold text-white rounded-lg shadow-md shadow-cyan-600/30 flex items-center gap-1.5">
+                        <span>📋</span> <span id="batch-script-copy-btn-text">Kopiraj AI Prompt</span>
                     </button>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- ================= MODAL: GITHUB LOGIN & IDENTITY ================= -->
+    <!-- ================= MODAL: GITHUB API 1-KLIK AUTORIZACIJA ================= -->
     <div id="github-login-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-3 sm:p-4">
-        <div class="bg-cardbg border border-slate-700 rounded-2xl max-w-md w-full p-4 sm:p-6 shadow-2xl space-y-4">
+        <div class="bg-cardbg border border-slate-700 rounded-2xl max-w-lg w-full p-4 sm:p-6 shadow-2xl space-y-4 max-h-[92vh] overflow-y-auto">
             <div class="flex items-center justify-between border-b border-slate-800 pb-3">
-                <div class="flex items-center gap-2">
-                    <span class="text-2xl">🐙</span>
+                <div class="flex items-center gap-2.5">
+                    <div class="w-9 h-9 rounded-xl bg-slate-900 border border-slate-700 flex items-center justify-center text-xl">
+                        🐙
+                    </div>
                     <div>
-                        <h3 class="text-sm sm:text-base font-bold text-slate-100">Prijava preko GitHub-a</h3>
-                        <p class="text-[11px] text-slate-400">Verifikacija uloge (Maintainer vs. Community Reviewer)</p>
+                        <h3 class="text-sm sm:text-base font-bold text-slate-100 flex items-center gap-1.5">
+                            GitHub API Autorizacija
+                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 font-mono font-normal">1-Klik</span>
+                        </h3>
+                        <p class="text-[11px] text-slate-400">Izravna veza s GitHub REST API-jem za verifikaciju i recenzije</p>
                     </div>
                 </div>
-                <button onclick="closeGitHubLoginModal()" class="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800">✕</button>
+                <button onclick="closeGitHubLoginModal()" class="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800 cursor-pointer">✕</button>
             </div>
 
-            <!-- Login Form -->
-            <div class="space-y-3">
-                <div>
-                    <label class="block text-xs font-semibold text-slate-300 mb-1">GitHub korisničko ime (@username):</label>
-                    <div class="flex gap-2">
-                        <div class="relative flex-1">
-                            <span class="absolute inset-y-0 left-0 pl-2.5 flex items-center text-slate-500 font-mono text-xs">@</span>
-                            <input id="github-username-input" type="text" placeholder="npr. ivica00 ili tvoje ime"
-                                   class="w-full pl-7 pr-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-100 font-mono focus:outline-none focus:border-cyan-500">
-                        </div>
-                        <button onclick="handleGitHubUsernameLogin()" class="px-3.5 py-2 bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-white font-bold text-xs rounded-lg transition flex items-center gap-1 cursor-pointer">
-                            <span>Prijavi se</span>
-                        </button>
-                    </div>
+            <!-- SEKCIJA 1: 1-KLIK BRZA AUTORIZACIJA -->
+            <div class="p-3.5 rounded-xl bg-gradient-to-r from-cyan-950/40 via-darkpanel to-slate-900 border border-cyan-800/60 space-y-2.5">
+                <div class="flex items-center justify-between">
+                    <span class="text-xs font-bold text-cyan-200 flex items-center gap-1.5">
+                        <span>⚡</span> 1-Klik Brza Autorizacija
+                    </span>
+                    <span class="text-[10px] text-cyan-400/80 font-mono">Uživo preko GitHub API-ja</span>
                 </div>
+                <p class="text-[11px] text-slate-300">
+                    Klikom na svoj profil aplikacija se odmah spaja na GitHubov API, povlači tvoje stvarne podatke (sliku, ime, bio) i dodjeljuje odgovarajuću ulogu:
+                </p>
 
-                <!-- Optional Token for Live Repo Permission Check -->
-                <div class="p-3 rounded-xl bg-slate-950 border border-slate-800/80 space-y-1.5">
-                    <div class="flex items-center justify-between">
-                        <label class="text-[11px] font-semibold text-slate-300">GitHub Token (opcionalno):</label>
-                        <span class="text-[10px] text-slate-500">Automatska provjera prava</span>
-                    </div>
-                    <input id="github-token-input" type="password" placeholder="ghp_... ili fine-grained token"
-                           class="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-slate-200 font-mono focus:outline-none focus:border-cyan-500">
-                    <p class="text-[10px] text-slate-500">Ako uneseš token, provjerava se izravno s GitHub API-jem imaš li push/maintain ovlasti na <code class="text-slate-400 font-mono">boykopovar/AnyPS5</code>.</p>
-                </div>
-
-                <!-- Live User Preview Card -->
-                <div id="github-user-preview" class="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-3">
-                    <div class="flex items-center gap-2.5 min-w-0">
-                        <img id="preview-avatar" src="https://github.com/boykopovar.png" class="w-9 h-9 rounded-full border border-slate-700 flex-shrink-0" alt="avatar">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                    <button onclick="oneClickLogin('ivica00')" class="p-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-cyan-500 text-left transition flex items-center gap-2.5 cursor-pointer shadow-sm group">
+                        <img src="https://github.com/ivica00.png" class="w-8 h-8 rounded-full border border-slate-600 group-hover:border-cyan-400 transition" alt="ivica00">
                         <div class="min-w-0">
-                            <div class="flex items-center gap-1.5">
-                                <span id="preview-login" class="font-bold text-slate-200 text-xs font-mono truncate">@boykopovar</span>
-                                <span id="preview-role-badge" class="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">🛡️ Maintainer</span>
-                            </div>
-                            <div id="preview-desc" class="text-[10px] text-slate-400 truncate">Službeni AnyPS5 maintainer</div>
+                            <div class="font-bold text-cyan-300 text-xs truncate">@ivica00</div>
+                            <div class="text-[10px] text-emerald-400 font-mono">🛡️ Službeni Maintainer</div>
                         </div>
-                    </div>
-                    <button onclick="toggleRolePreview()" id="role-toggle-btn" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded text-[10px] font-medium transition whitespace-nowrap cursor-pointer">
-                        Prebaci ulogu
+                    </button>
+
+                    <button onclick="oneClickLogin('boykopovar')" class="p-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-cyan-500 text-left transition flex items-center gap-2.5 cursor-pointer shadow-sm group">
+                        <img src="https://github.com/boykopovar.png" class="w-8 h-8 rounded-full border border-slate-600 group-hover:border-cyan-400 transition" alt="boykopovar">
+                        <div class="min-w-0">
+                            <div class="font-bold text-cyan-300 text-xs truncate">@boykopovar</div>
+                            <div class="text-[10px] text-emerald-400 font-mono">🛡️ Repo Lead & Owner</div>
+                        </div>
+                    </button>
+
+                    <button onclick="oneClickLogin('Honza11')" class="p-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-cyan-500 text-left transition flex items-center gap-2.5 cursor-pointer shadow-sm group">
+                        <img src="https://github.com/Honza11.png" class="w-8 h-8 rounded-full border border-slate-600 group-hover:border-cyan-400 transition" alt="Honza11">
+                        <div class="min-w-0">
+                            <div class="font-bold text-cyan-300 text-xs truncate">@Honza11</div>
+                            <div class="text-[10px] text-emerald-400 font-mono">🛡️ AGC & Vulkan</div>
+                        </div>
+                    </button>
+
+                    <button onclick="oneClickLogin('AnyPS5-Contributor', 'reviewer')" class="p-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-purple-900/60 hover:border-purple-500 text-left transition flex items-center gap-2.5 cursor-pointer shadow-sm group">
+                        <div class="w-8 h-8 rounded-full bg-purple-950 border border-purple-700 flex items-center justify-center text-sm text-purple-300">
+                            🔍
+                        </div>
+                        <div class="min-w-0">
+                            <div class="font-bold text-purple-300 text-xs truncate">Vanjski Suradnik</div>
+                            <div class="text-[10px] text-purple-400 font-mono">🔍 Community Reviewer</div>
+                        </div>
                     </button>
                 </div>
+            </div>
 
-                <!-- Quick Switch Profiles -->
-                <div class="space-y-1.5 pt-1">
-                    <span class="text-[10px] uppercase tracking-wider font-bold text-slate-500 block">Brzi odabir profila:</span>
-                    <div class="grid grid-cols-2 gap-1.5 text-xs">
-                        <button onclick="quickSelectUser('boykopovar')" class="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-left transition flex items-center gap-1.5 cursor-pointer">
-                            <img src="https://github.com/boykopovar.png" class="w-5 h-5 rounded-full" alt="avatar">
-                            <div class="truncate">
-                                <div class="font-bold text-cyan-300 text-[11px] truncate">@boykopovar</div>
-                                <div class="text-[9px] text-emerald-400">🛡️ Repo Lead</div>
-                            </div>
-                        </button>
-                        <button onclick="quickSelectUser('ivica00')" class="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-left transition flex items-center gap-1.5 cursor-pointer">
-                            <img src="https://github.com/ivica00.png" class="w-5 h-5 rounded-full" alt="avatar">
-                            <div class="truncate">
-                                <div class="font-bold text-cyan-300 text-[11px] truncate">@ivica00</div>
-                                <div class="text-[9px] text-emerald-400">🛡️ Maintainer</div>
-                            </div>
-                        </button>
-                        <button onclick="quickSelectUser('Honza11')" class="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-left transition flex items-center gap-1.5 cursor-pointer">
-                            <img src="https://github.com/Honza11.png" class="w-5 h-5 rounded-full" alt="avatar">
-                            <div class="truncate">
-                                <div class="font-bold text-cyan-300 text-[11px] truncate">@Honza11</div>
-                                <div class="text-[9px] text-emerald-400">🛡️ AGC Maintainer</div>
-                            </div>
-                        </button>
-                        <button onclick="quickSelectUser('community_user')" class="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-purple-900/50 text-left transition flex items-center gap-1.5 cursor-pointer">
-                            <div class="w-5 h-5 rounded-full bg-purple-950 border border-purple-700 flex items-center justify-center text-[10px] text-purple-300">🔍</div>
-                            <div class="truncate">
-                                <div class="font-bold text-purple-300 text-[11px] truncate">@suradnik</div>
-                                <div class="text-[9px] text-purple-400">🔍 Community Reviewer</div>
-                            </div>
-                        </button>
+            <!-- SEKCIJA 2: PRIJAVA PROIZVOLJNIM GITHUB KORISNIČKIM IMENOM -->
+            <div class="space-y-2">
+                <label class="block text-xs font-semibold text-slate-300">Ili unesi bilo koje GitHub korisničko ime (@username):</label>
+                <div class="flex gap-2">
+                    <div class="relative flex-1">
+                        <span class="absolute inset-y-0 left-0 pl-2.5 flex items-center text-slate-500 font-mono text-xs">@</span>
+                        <input id="github-username-input" type="text" placeholder="npr. tvoje-github-ime"
+                               class="w-full pl-7 pr-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-100 font-mono focus:outline-none focus:border-cyan-500">
+                    </div>
+                    <button onclick="handleGitHubUsernameLogin()" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-white font-bold text-xs rounded-lg transition flex items-center gap-1 cursor-pointer">
+                        <span>Provjeri & Prijavi</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- SEKCIJA 3: PUN PUSH/API PRISTUP S TOKENOM -->
+            <div class="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-1.5">
+                        <span class="text-amber-400 text-xs">🔑</span>
+                        <label class="text-xs font-semibold text-slate-200">Puni GitHub API Token (za slanje recenzija):</label>
+                    </div>
+                    <span class="text-[10px] text-slate-400 font-mono">Opcija</span>
+                </div>
+                <div class="flex gap-2">
+                    <input id="github-token-input" type="password" placeholder="ghp_... ili fine-grained token"
+                           class="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-slate-200 font-mono focus:outline-none focus:border-cyan-500">
+                    <button onclick="verifyAndConnectGitHubToken()" class="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-lg transition cursor-pointer whitespace-nowrap">
+                        ⚡ Provjeri token
+                    </button>
+                </div>
+                <p class="text-[10px] text-slate-400">
+                    💡 <strong>Brzi savjet:</strong> Ako si prijavljen u terminalu, pokreni <code class="text-slate-300 font-mono bg-slate-900 px-1 py-0.5 rounded">gh auth token</code> i zalijepi ga ovdje za 5000 API poziva/sat i izravno objavljivanje komentara na PR-ovima!
+                </p>
+            </div>
+
+            <!-- TRENUTNO AKTIVAN PROFIL (LIVE STATUS) -->
+            <div id="github-user-preview" class="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-3">
+                <div class="flex items-center gap-2.5 min-w-0">
+                    <img id="preview-avatar" src="https://github.com/boykopovar.png" class="w-9 h-9 rounded-full border border-slate-700 flex-shrink-0" alt="avatar">
+                    <div class="min-w-0">
+                        <div class="flex items-center gap-1.5 flex-wrap">
+                            <span id="preview-login" class="font-bold text-slate-200 text-xs font-mono truncate">@boykopovar</span>
+                            <span id="preview-role-badge" class="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">🛡️ Maintainer</span>
+                            <span id="preview-api-verified-badge" class="hidden text-[9px] px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 font-mono">API Verificiran</span>
+                        </div>
+                        <div id="preview-desc" class="text-[10px] text-slate-400 truncate">Službeni AnyPS5 maintainer</div>
                     </div>
                 </div>
+                <button onclick="toggleRolePreview()" id="role-toggle-btn" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded text-[10px] font-medium transition whitespace-nowrap cursor-pointer">
+                    Prebaci ulogu
+                </button>
             </div>
 
             <!-- Footer -->
             <div class="border-t border-slate-800 pt-3 flex items-center justify-between">
                 <button onclick="handleLogout()" class="text-[11px] text-rose-400 hover:underline cursor-pointer">
-                    Odjavi se
+                    Odjavi se / Obriši sesiju
                 </button>
-                <button onclick="closeGitHubLoginModal()" class="px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs rounded-lg transition cursor-pointer">
-                    Spremi i nastavi
+                <button onclick="closeGitHubLoginModal()" class="px-5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs rounded-lg transition cursor-pointer shadow-md shadow-cyan-600/30">
+                    Nastavi s radom
                 </button>
             </div>
         </div>

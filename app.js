@@ -21,6 +21,12 @@ const KNOWN_MAINTAINERS = [
 const state = {
     allPRs: [],
     minibatches: [],
+    batchViewMode: 'compact', // 'compact' (default, highly dense for 50+ batches) or 'grid'
+    batchSearchTerm: '',
+    batchLimit: 50,
+    expandedBatches: new Set(),
+    activeBatchForModal: null,
+    activeBatchModalTab: 'ai-prompt', // 'ai-prompt', 'merge', or 'test'
     currentUser: {
         username: 'boykopovar',
         name: 'Boyko Povar',
@@ -166,7 +172,9 @@ function updateUserUI() {
     const prevLogin = document.getElementById('preview-login');
     const prevRole = document.getElementById('preview-role-badge');
     const prevDesc = document.getElementById('preview-desc');
+    const prevApiVerified = document.getElementById('preview-api-verified-badge');
     const roleToggleBtn = document.getElementById('role-toggle-btn');
+    const tokenInput = document.getElementById('github-token-input');
 
     if (prevAvatar) prevAvatar.src = u.avatar || `https://github.com/${u.username}.png`;
     if (prevLogin) prevLogin.innerText = `@${u.username}`;
@@ -178,6 +186,18 @@ function updateUserUI() {
             prevRole.className = 'px-1.5 py-0.2 rounded text-[10px] font-bold bg-purple-950 text-purple-300 border border-purple-800';
             prevRole.innerText = '🔍 Community Reviewer';
         }
+    }
+    if (prevApiVerified) {
+        if (u.token) {
+            prevApiVerified.className = 'text-[9px] px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 font-mono inline-block';
+            prevApiVerified.innerText = '🔑 GitHub API Povezan';
+            prevApiVerified.classList.remove('hidden');
+        } else {
+            prevApiVerified.classList.add('hidden');
+        }
+    }
+    if (tokenInput && u.token && !tokenInput.value) {
+        tokenInput.value = u.token;
     }
     if (prevDesc) {
         prevDesc.innerText = isM ? 'Službeni AnyPS5 maintainer' : 'Vanjski recenzent zajednice';
@@ -399,92 +419,249 @@ function setupSupabaseRealtime() {
 // MINIBATCH STUDIO (SERVER-SIDE LOCKING)
 // ==========================================
 
-function renderMinibatches() {
+// ==========================================
+// MINIBATCH STUDIO (SERVER-SIDE LOCKING & HIGH-DENSITY VIEW)
+// ==========================================
+
+function setBatchViewMode(mode) {
+    state.batchViewMode = mode;
+    const btnCompact = document.getElementById('btn-batch-view-compact');
+    const btnGrid = document.getElementById('btn-batch-view-grid');
     const container = document.getElementById('minibatches-container');
-    const visibleCountEl = document.getElementById('batches-visible-count');
-    const badgeEl = document.getElementById('batches-count-badge');
-    if (!container) return;
 
-    if (badgeEl) badgeEl.innerText = state.minibatches.length;
+    if (btnCompact && btnGrid) {
+        if (mode === 'compact') {
+            btnCompact.className = 'px-2.5 py-1 rounded text-xs font-semibold transition text-cyan-300 bg-slate-800 shadow-sm';
+            btnGrid.className = 'px-2.5 py-1 rounded text-xs font-medium transition text-slate-400 hover:text-slate-200';
+            if (container) container.className = 'space-y-1.5';
+        } else {
+            btnGrid.className = 'px-2.5 py-1 rounded text-xs font-semibold transition text-cyan-300 bg-slate-800 shadow-sm';
+            btnCompact.className = 'px-2.5 py-1 rounded text-xs font-medium transition text-slate-400 hover:text-slate-200';
+            if (container) container.className = 'grid grid-cols-1 lg:grid-cols-2 gap-4';
+        }
+    }
+    renderMinibatches();
+}
 
+function toggleBatchExpand(batchId) {
+    if (state.expandedBatches.has(batchId)) {
+        state.expandedBatches.delete(batchId);
+    } else {
+        state.expandedBatches.add(batchId);
+    }
+    renderMinibatches();
+}
+
+function toggleAllBatchesExpand() {
+    const btn = document.getElementById('btn-toggle-all-batches');
+    const visibleBatches = getFilteredBatches();
+    const allExpanded = visibleBatches.length > 0 && visibleBatches.every(b => state.expandedBatches.has(b.id));
+
+    if (allExpanded) {
+        visibleBatches.forEach(b => state.expandedBatches.delete(b.id));
+        if (btn) btn.innerText = '↕ Proširi sve';
+    } else {
+        visibleBatches.forEach(b => state.expandedBatches.add(b.id));
+        if (btn) btn.innerText = '↕ Skupi sve';
+    }
+    renderMinibatches();
+}
+
+function getFilteredBatches() {
+    const searchTerm = (document.getElementById('batch-search-input')?.value || '').trim().toLowerCase();
     const catFilter = document.getElementById('batch-cat-filter')?.value || 'all';
     const tierFilter = document.getElementById('batch-tier-filter')?.value || 'all';
     const statusFilter = document.getElementById('batch-status-filter')?.value || 'available';
 
-    let visibleBatches = state.minibatches.filter(b => {
+    return state.minibatches.filter(b => {
         if (catFilter !== 'all' && b.category !== catFilter) return false;
         if (tierFilter !== 'all' && b.complexity !== tierFilter) return false;
 
         if (statusFilter === 'available') {
-            return b.status === 'available' || b.claimedBy === 'none';
+            if (!(b.status === 'available' || b.claimedBy === 'none')) return false;
         } else if (statusFilter === 'mine') {
-            return b.claimedBy === state.currentMaintainer;
+            if (b.claimedBy !== state.currentMaintainer) return false;
         } else if (statusFilter === 'claimed') {
-            return b.claimedBy && b.claimedBy !== 'none' && b.claimedBy !== state.currentMaintainer;
+            if (!(b.claimedBy && b.claimedBy !== 'none' && b.claimedBy !== state.currentMaintainer)) return false;
         }
+
+        if (searchTerm) {
+            const inTitle = (b.title || '').toLowerCase().includes(searchTerm);
+            const inCat = (b.category || '').toLowerCase().includes(searchTerm);
+            const inId = (b.id || '').toLowerCase().includes(searchTerm);
+            const inPRs = (b.prNumbers || []).some(num => num.toString().includes(searchTerm));
+            const inPRTitles = (b.prs || []).some(p => (p.title || '').toLowerCase().includes(searchTerm));
+            if (!inTitle && !inCat && !inId && !inPRs && !inPRTitles) return false;
+        }
+
         return true;
     });
+}
 
-    if (visibleCountEl) visibleCountEl.innerText = visibleBatches.length;
+function renderMinibatches() {
+    const container = document.getElementById('minibatches-container');
+    const visibleCountEl = document.getElementById('batches-visible-count');
+    const badgeEl = document.getElementById('batches-count-badge');
+    const limitFilter = document.getElementById('batch-limit-filter')?.value || '50';
+    if (!container) return;
+
+    if (badgeEl) badgeEl.innerText = state.minibatches.length;
+
+    const filtered = getFilteredBatches();
+    const limit = limitFilter === 'all' ? filtered.length : parseInt(limitFilter, 10);
+    const visibleBatches = filtered.slice(0, limit);
+
+    if (visibleCountEl) {
+        visibleCountEl.innerText = `${visibleBatches.length}${filtered.length > visibleBatches.length ? ` od ${filtered.length}` : ''}`;
+    }
 
     if (visibleBatches.length === 0) {
         container.innerHTML = `
             <div class="col-span-full p-8 text-center bg-slate-900/60 rounded-xl border border-slate-800 text-slate-400 text-xs">
-                Nema paketa koji odgovaraju odabranim filterima.
+                Nema paketa koji odgovaraju odabranim filterima ili pojmu pretrage.
             </div>
         `;
         return;
     }
 
-    container.innerHTML = visibleBatches.map(b => {
-        const catBadge = getCategoryBadge(b.category);
-        const tierBadge = getComplexityBadge(b.complexity, b.prNumbers.length);
-        const selectedCount = b.selectedPRs.size;
-        const totalPRs = b.prs.length || b.prNumbers.length;
+    // Set correct container classes depending on view mode
+    if (state.batchViewMode === 'compact') {
+        container.className = 'space-y-1.5';
+        container.innerHTML = visibleBatches.map(b => renderCompactBatchRow(b)).join('');
+    } else {
+        container.className = 'grid grid-cols-1 lg:grid-cols-2 gap-4';
+        container.innerHTML = visibleBatches.map(b => renderGridBatchCard(b)).join('');
+    }
+}
 
-        const isClaimedByMe = b.claimedBy === state.currentMaintainer;
-        const isClaimedByOther = b.claimedBy && b.claimedBy !== 'none' && !isClaimedByMe;
+// High-Density Compact Batch Row (Perfect for scanning 50+ batches on 1-2 screen heights)
+function renderCompactBatchRow(b) {
+    const catBadge = getCategoryBadge(b.category);
+    const tierBadge = getComplexityBadge(b.complexity, b.prNumbers.length);
+    const selectedCount = b.selectedPRs.size;
+    const totalPRs = b.prs.length || b.prNumbers.length;
+    const isExpanded = state.expandedBatches.has(b.id);
 
-        return `
-            <div class="p-4 rounded-xl bg-cardbg border ${isClaimedByOther ? 'border-slate-800/60 opacity-80' : isClaimedByMe ? 'border-cyan-500/50 ring-1 ring-cyan-500/30' : 'border-slate-800 hover:border-slate-700'} transition shadow-sm space-y-3 flex flex-col justify-between" id="card-${b.id}">
-                <div class="space-y-2">
-                    <!-- Batch Card Header -->
-                    <div class="flex items-center justify-between gap-2 flex-wrap">
-                        <div class="flex items-center gap-1.5 flex-wrap">
-                            ${catBadge}
-                            ${tierBadge}
-                        </div>
-                        ${isClaimedByOther ? `
-                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-900 text-amber-300 border border-amber-800/80 font-mono flex items-center gap-1">
-                                <span>🔒</span> Zauzeo @${escapeHtml(b.claimedBy)}
-                            </span>
-                        ` : isClaimedByMe ? `
-                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 font-mono flex items-center gap-1">
-                                <span>👤</span> Tvoj preuzeti paket
-                            </span>
-                        ` : `
-                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono flex items-center gap-1">
-                                <span>🟢</span> Slobodan na Supabaseu
-                            </span>
-                        `}
+    const isClaimedByMe = b.claimedBy === state.currentMaintainer;
+    const isClaimedByOther = b.claimedBy && b.claimedBy !== 'none' && !isClaimedByMe;
+
+    let totalAdds = 0;
+    let totalDels = 0;
+    const uniqueFiles = new Set();
+    b.prs.forEach(p => {
+        totalAdds += (p.additions || 0);
+        totalDels += (p.deletions || 0);
+        (p.files || []).forEach(f => {
+            const path = typeof f === 'string' ? f : (f.path || '');
+            if (path) uniqueFiles.add(path);
+        });
+    });
+
+    const statusPill = isClaimedByOther ? `
+        <span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-900 text-amber-300 border border-amber-800/80 font-mono whitespace-nowrap flex items-center gap-1">
+            <span>🔒</span> @${escapeHtml(b.claimedBy)}
+        </span>
+    ` : isClaimedByMe ? `
+        <span class="text-[10px] px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 font-mono whitespace-nowrap flex items-center gap-1">
+            <span>👤</span> Tvoj
+        </span>
+    ` : `
+        <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono whitespace-nowrap flex items-center gap-1">
+            <span>🟢</span> Slobodan
+        </span>
+    `;
+
+    const actionButton = isCurrentUserMaintainer() ? (
+        isClaimedByOther ? `
+            <button disabled class="px-2.5 py-1 bg-slate-900 text-slate-500 border border-slate-800 rounded-md text-[11px] font-semibold cursor-not-allowed">
+                🔒 Zauzet
+            </button>
+        ` : isClaimedByMe ? `
+            <button onclick="releaseBatch('${b.id}')" 
+                    class="px-2.5 py-1 bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-800 rounded-md text-[11px] font-semibold transition cursor-pointer">
+                Vrati
+            </button>
+        ` : `
+            <button onclick="claimBatchServerSide('${b.id}')" 
+                    class="px-2.5 py-1 bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-white font-bold rounded-md text-[11px] shadow-sm shadow-cyan-600/20 transition flex items-center gap-1 cursor-pointer">
+                <span>➕</span> Preuzmi (${selectedCount})
+            </button>
+        `
+    ) : `
+        <button onclick="addBatchToReviewWatchlist('${b.id}')" 
+                class="px-2.5 py-1 bg-purple-950 hover:bg-purple-900 text-purple-300 border border-purple-800 rounded-md text-[11px] font-semibold transition flex items-center gap-1 cursor-pointer">
+            <span>🔍</span> Testiraj (${selectedCount})
+        </button>
+    `;
+
+    return `
+        <div class="rounded-xl bg-cardbg border ${isClaimedByOther ? 'border-slate-800/60 opacity-80' : isClaimedByMe ? 'border-cyan-500/50 ring-1 ring-cyan-500/30' : 'border-slate-800 hover:border-slate-700'} transition shadow-sm p-2 sm:p-2.5" id="batch-row-${b.id}">
+            <!-- Main Dense Horizontal Bar -->
+            <div class="flex items-center justify-between gap-2 flex-wrap lg:flex-nowrap">
+                <!-- Left: Expander, Category, Title, Complexity -->
+                <div class="flex items-center gap-2 min-w-0 flex-1">
+                    <button onclick="toggleBatchExpand('${b.id}')" class="p-1 rounded text-slate-400 hover:text-cyan-300 hover:bg-slate-800 transition text-[11px] flex-shrink-0" title="Prikaži/sakrij pojedinačne PR-ove">
+                        ${isExpanded ? '▼' : '▶'}
+                    </button>
+                    ${catBadge}
+                    <span class="font-bold text-xs text-slate-100 hover:text-cyan-300 cursor-pointer truncate" onclick="toggleBatchExpand('${b.id}')" title="${escapeHtml(b.title)}">
+                        ${escapeHtml(b.title)}
+                    </span>
+                    ${tierBadge}
+                </div>
+
+                <!-- Middle: Aggregate Diff, Disjoint Files, Clickable PR Pills -->
+                <div class="flex items-center gap-2 text-xs font-mono flex-shrink-0">
+                    <div class="text-[11px] whitespace-nowrap">
+                        <span class="text-emerald-400 font-bold">+${totalAdds}</span>/<span class="text-rose-400 font-bold">-${totalDels}</span>
                     </div>
+                    <span class="text-slate-400 text-[10px] hidden md:inline px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 whitespace-nowrap" title="Zajamčeno disjunktne datoteke bez međusobnih konflikata">
+                        📁 ${uniqueFiles.size} dat.
+                    </span>
 
-                    <div>
-                        <h3 class="text-sm font-bold text-slate-100 flex items-center justify-between">
-                            <span>${escapeHtml(b.title)}</span>
-                            <span class="text-xs font-mono text-cyan-400">${selectedCount}/${totalPRs} odabrano</span>
-                        </h3>
-                        <p class="text-[11px] text-slate-400 mt-0.5">
-                            Paket sadrži ${totalPRs} PR-ova s disjunktnim datotekama. Centralno koordinirano na Supabase poslužitelju.
-                        </p>
+                    <!-- Clickable PR pills with hover titles -->
+                    <div class="flex items-center gap-1 flex-wrap">
+                        ${b.prs.slice(0, 6).map(pr => `
+                            <span onclick="openInspectModal(${pr.number})" title="${escapeHtml(pr.title)} (${pr.author})" class="px-1.5 py-0.5 rounded bg-slate-900/90 hover:bg-cyan-950 text-cyan-400 border border-slate-800 hover:border-cyan-700 text-[10px] font-bold cursor-pointer transition whitespace-nowrap">
+                                #${pr.number}
+                            </span>
+                        `).join('')}
+                        ${b.prs.length > 6 ? `<span class="text-[10px] text-slate-500 font-mono cursor-pointer" onclick="toggleBatchExpand('${b.id}')">+${b.prs.length - 6} još</span>` : ''}
                     </div>
+                </div>
 
-                    <!-- PR Items inside batch with checkboxes -->
-                    <div class="space-y-1.5 pt-1 max-h-56 overflow-y-auto pr-1">
+                <!-- Right: Status + 1-Click AI Prompt + CLI + Claim -->
+                <div class="flex items-center gap-1.5 flex-shrink-0 ml-auto lg:ml-0">
+                    ${statusPill}
+                    
+                    <!-- 1-Click Deterministic AI Prompt Copy Button -->
+                    <button onclick="copyBatchAIPrompt('${b.id}', event)" class="px-2 py-1 bg-indigo-950 hover:bg-indigo-900 active:scale-95 text-indigo-300 border border-indigo-800 rounded-md text-[11px] font-semibold transition flex items-center gap-1 cursor-pointer" title="Kopiraj deterministički prompt za Claude / GPT-4o / Gemini">
+                        <span>🤖</span> <span class="hidden sm:inline">AI Prompt</span>
+                    </button>
+
+                    <!-- CLI Script Modal Button -->
+                    <button onclick="openBatchScriptModal('${b.id}', 'merge')" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-md text-[11px] font-mono transition flex items-center gap-1 cursor-pointer" title="Prikaži CLI Merge / Test skripte">
+                        <span>⚡</span> <span class="hidden sm:inline">CLI</span>
+                    </button>
+
+                    ${actionButton}
+                </div>
+            </div>
+
+            <!-- Expandable Detailed PR Checkbox List -->
+            ${isExpanded ? `
+                <div class="mt-2.5 pt-2 border-t border-slate-800/80 space-y-1">
+                    <div class="flex items-center justify-between text-[11px] text-slate-400 px-1 pb-1">
+                        <span>Odabrano PR-ova: <strong class="text-cyan-400">${selectedCount}/${totalPRs}</strong> (svi PR-ovi diraju disjunktne datoteke)</span>
+                        <button onclick="openBatchScriptModal('${b.id}', 'ai-prompt')" class="text-cyan-400 hover:underline flex items-center gap-1">
+                            <span>🤖</span> Pregledaj cijeli AI Prompt u modalu &rarr;
+                        </button>
+                    </div>
+                    <div class="space-y-1 max-h-60 overflow-y-auto pr-1">
                         ${b.prs.map(pr => {
                             const isChecked = b.selectedPRs.has(pr.number);
                             return `
-                                <div class="flex items-center justify-between p-2 rounded-lg bg-slate-900/90 border border-slate-800/80 text-xs hover:border-slate-700 transition">
+                                <div class="flex items-center justify-between p-1.5 rounded-lg bg-slate-900/80 border border-slate-800/80 text-xs hover:border-slate-700 transition">
                                     <div class="flex items-center gap-2 flex-1 min-w-0 pr-2">
                                         <input type="checkbox" ${isChecked ? 'checked' : ''} 
                                                ${isClaimedByOther ? 'disabled' : ''}
@@ -495,50 +672,243 @@ function renderMinibatches() {
                                             ${escapeHtml(pr.title)}
                                         </span>
                                     </div>
-                                    <div class="flex items-center gap-1.5 flex-shrink-0 text-[10px] font-mono">
+                                    <div class="flex items-center gap-2 flex-shrink-0 text-[10px] font-mono">
+                                        <span class="text-slate-400 text-[10px]">@${escapeHtml(pr.author)}</span>
                                         <span class="text-emerald-400">+${pr.additions}</span>/<span class="text-rose-400">-${pr.deletions}</span>
+                                        <button onclick="openInspectModal(${pr.number})" class="text-cyan-400 hover:text-cyan-300 p-0.5">🔍</button>
                                     </div>
                                 </div>
                             `;
                         }).join('')}
                     </div>
                 </div>
+            ` : ''}
+        </div>
+    `;
+}
 
-                <!-- Batch Actions (Role-Aware: Maintainer vs Community Reviewer) -->
-                <div class="pt-3 border-t border-slate-800 flex items-center justify-between flex-wrap gap-2 text-xs">
-                    <div class="flex items-center gap-1.5">
-                        ${isCurrentUserMaintainer() ? (
-                            isClaimedByOther ? `
-                                <button disabled class="px-3 py-1.5 bg-slate-900 text-slate-500 border border-slate-800 rounded-lg text-xs font-semibold cursor-not-allowed">
-                                    🔒 Već zaduženo
-                                </button>
-                            ` : isClaimedByMe ? `
-                                <button onclick="releaseBatch('${b.id}')" 
-                                        class="px-3 py-1.5 bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-800 rounded-lg text-xs font-semibold transition cursor-pointer">
-                                    Vrati paket u opticaj
-                                </button>
-                            ` : `
-                                <button onclick="claimBatchServerSide('${b.id}')" 
-                                        class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-white font-bold rounded-lg text-xs shadow-md shadow-cyan-600/20 transition flex items-center gap-1 cursor-pointer">
-                                    <span>➕</span> Preuzmi paket (${selectedCount})
-                                </button>
-                            `
-                        ) : `
-                            <button onclick="addBatchToReviewWatchlist('${b.id}')" 
-                                    class="px-3 py-1.5 bg-purple-950 hover:bg-purple-900 text-purple-300 border border-purple-800 rounded-lg text-xs font-semibold transition flex items-center gap-1 cursor-pointer">
-                                <span>🔍</span> Testiraj paket (${selectedCount})
-                            </button>
-                        `}
+// Grid Card View (Alternative mode for Minibatches)
+function renderGridBatchCard(b) {
+    const catBadge = getCategoryBadge(b.category);
+    const tierBadge = getComplexityBadge(b.complexity, b.prNumbers.length);
+    const selectedCount = b.selectedPRs.size;
+    const totalPRs = b.prs.length || b.prNumbers.length;
+
+    const isClaimedByMe = b.claimedBy === state.currentMaintainer;
+    const isClaimedByOther = b.claimedBy && b.claimedBy !== 'none' && !isClaimedByMe;
+
+    return `
+        <div class="p-4 rounded-xl bg-cardbg border ${isClaimedByOther ? 'border-slate-800/60 opacity-80' : isClaimedByMe ? 'border-cyan-500/50 ring-1 ring-cyan-500/30' : 'border-slate-800 hover:border-slate-700'} transition shadow-sm space-y-3 flex flex-col justify-between" id="card-${b.id}">
+            <div class="space-y-2">
+                <!-- Batch Card Header -->
+                <div class="flex items-center justify-between gap-2 flex-wrap">
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                        ${catBadge}
+                        ${tierBadge}
                     </div>
+                    ${isClaimedByOther ? `
+                        <span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-900 text-amber-300 border border-amber-800/80 font-mono flex items-center gap-1">
+                            <span>🔒</span> Zauzeo @${escapeHtml(b.claimedBy)}
+                        </span>
+                    ` : isClaimedByMe ? `
+                        <span class="text-[10px] px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 font-mono flex items-center gap-1">
+                            <span>👤</span> Tvoj preuzeti paket
+                        </span>
+                    ` : `
+                        <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono flex items-center gap-1">
+                            <span>🟢</span> Slobodan na Supabaseu
+                        </span>
+                    `}
+                </div>
 
-                    <button onclick="openBatchScriptModal('${b.id}')" 
+                <div>
+                    <h3 class="text-sm font-bold text-slate-100 flex items-center justify-between">
+                        <span>${escapeHtml(b.title)}</span>
+                        <span class="text-xs font-mono text-cyan-400">${selectedCount}/${totalPRs} odabrano</span>
+                    </h3>
+                    <p class="text-[11px] text-slate-400 mt-0.5">
+                        Paket sadrži ${totalPRs} PR-ova s disjunktnim datotekama. 100% konflikt-free spajanje.
+                    </p>
+                </div>
+
+                <!-- PR Items inside batch with checkboxes -->
+                <div class="space-y-1.5 pt-1 max-h-56 overflow-y-auto pr-1">
+                    ${b.prs.map(pr => {
+                        const isChecked = b.selectedPRs.has(pr.number);
+                        return `
+                            <div class="flex items-center justify-between p-2 rounded-lg bg-slate-900/90 border border-slate-800/80 text-xs hover:border-slate-700 transition">
+                                <div class="flex items-center gap-2 flex-1 min-w-0 pr-2">
+                                    <input type="checkbox" ${isChecked ? 'checked' : ''} 
+                                           ${isClaimedByOther ? 'disabled' : ''}
+                                           onchange="togglePRInBatch('${b.id}', ${pr.number}, this.checked)"
+                                           class="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-cyan-500 cursor-pointer">
+                                    <span class="font-mono font-bold text-cyan-400 text-[11px]">#${pr.number}</span>
+                                    <span class="text-[11px] text-slate-200 truncate cursor-pointer hover:text-cyan-300" onclick="openInspectModal(${pr.number})" title="${escapeHtml(pr.title)}">
+                                        ${escapeHtml(pr.title)}
+                                    </span>
+                                </div>
+                                <div class="flex items-center gap-1.5 flex-shrink-0 text-[10px] font-mono">
+                                    <span class="text-emerald-400">+${pr.additions}</span>/<span class="text-rose-400">-${pr.deletions}</span>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            </div>
+
+            <!-- Batch Actions (Role-Aware + AI Prompt Button) -->
+            <div class="pt-3 border-t border-slate-800 flex items-center justify-between flex-wrap gap-2 text-xs">
+                <div class="flex items-center gap-1.5">
+                    ${isCurrentUserMaintainer() ? (
+                        isClaimedByOther ? `
+                            <button disabled class="px-3 py-1.5 bg-slate-900 text-slate-500 border border-slate-800 rounded-lg text-xs font-semibold cursor-not-allowed">
+                                🔒 Već zaduženo
+                            </button>
+                        ` : isClaimedByMe ? `
+                            <button onclick="releaseBatch('${b.id}')" 
+                                    class="px-3 py-1.5 bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-800 rounded-lg text-xs font-semibold transition cursor-pointer">
+                                Vrati paket u opticaj
+                            </button>
+                        ` : `
+                            <button onclick="claimBatchServerSide('${b.id}')" 
+                                    class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-white font-bold rounded-lg text-xs shadow-md shadow-cyan-600/20 transition flex items-center gap-1 cursor-pointer">
+                                <span>➕</span> Preuzmi (${selectedCount})
+                            </button>
+                        `
+                    ) : `
+                        <button onclick="addBatchToReviewWatchlist('${b.id}')" 
+                                class="px-3 py-1.5 bg-purple-950 hover:bg-purple-900 text-purple-300 border border-purple-800 rounded-lg text-xs font-semibold transition flex items-center gap-1 cursor-pointer">
+                            <span>🔍</span> Testiraj paket (${selectedCount})
+                        </button>
+                    `}
+                </div>
+
+                <div class="flex items-center gap-1.5">
+                    <!-- 1-Click AI Prompt Copy -->
+                    <button onclick="copyBatchAIPrompt('${b.id}', event)" 
+                            class="px-2.5 py-1.5 bg-indigo-950 hover:bg-indigo-900 text-indigo-300 border border-indigo-800 rounded-lg text-xs font-semibold transition flex items-center gap-1 cursor-pointer" title="Kopiraj deterministički prompt">
+                        <span>🤖</span> AI Prompt
+                    </button>
+                    <!-- CLI modal -->
+                    <button onclick="openBatchScriptModal('${b.id}', 'merge')" 
                             class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg text-xs font-mono transition flex items-center gap-1 cursor-pointer">
-                        <span>💻</span> ${isCurrentUserMaintainer() ? 'CLI Merge' : 'CLI Test'}
+                        <span>⚡</span> CLI
                     </button>
                 </div>
             </div>
-        `;
-    }).join('');
+        </div>
+    `;
+}
+
+// Deterministički generator AI Promptova za LLM (Claude, GPT, Gemini)
+function generateBatchAIPrompt(batchId) {
+    const batch = state.minibatches.find(b => b.id === batchId);
+    if (!batch) return '';
+
+    const selectedNums = Array.from(batch.selectedPRs || batch.prNumbers || []);
+    const prs = selectedNums.map(n => state.allPRs.find(p => p.number === n)).filter(Boolean);
+
+    let totalAdds = 0;
+    let totalDels = 0;
+    const allFiles = new Set();
+
+    prs.forEach(p => {
+        totalAdds += (p.additions || 0);
+        totalDels += (p.deletions || 0);
+        const fList = p.files || [];
+        fList.forEach(f => {
+            if (typeof f === 'string') allFiles.add(f);
+            else if (f && f.path) allFiles.add(f.path);
+        });
+    });
+    allFiles.delete('');
+
+    let p = `# AnyPS5 Pull Request Batch Review: ${batch.title}\n\n`;
+    p += `## 🎯 OBJECTIVE & ROLE\n`;
+    p += `You are an elite principal systems software engineer, C++ architect, and PlayStation 5 emulator core contributor.\n`;
+    p += `Your task is to conduct a rigorous, comprehensive architectural and code safety review of a **conflict-free batch of pull requests** destined for the \`boykopovar/AnyPS5\` repository.\n\n`;
+
+    p += `## 📦 BATCH SPECIFICATION\n`;
+    p += `- **Batch Identifier**: \`${batch.id}\`\n`;
+    p += `- **Subsystem / Domain**: \`${batch.category}\`\n`;
+    p += `- **Complexity Tier**: \`${batch.complexityLabel || batch.complexity}\`\n`;
+    p += `- **Total Pull Requests**: ${prs.length}\n`;
+    p += `- **Disjoint Files Guarantee**: ✅ **CONFIRMED 100% DISJOINT** (PRs inside this batch do NOT share modified files, guaranteeing zero direct git conflicts)\n`;
+    p += `- **Aggregate Code Churn**: +${totalAdds} / -${totalDels} lines across ${allFiles.size} unique files\n\n`;
+    p += `---\n\n`;
+
+    p += `## 🔍 DETAILED INCLUDED PULL REQUESTS\n\n`;
+    prs.forEach((pr, idx) => {
+        const rawAuthor = pr.author || 'unknown';
+        const author = typeof rawAuthor === 'object' ? (rawAuthor.login || rawAuthor.name || 'unknown') : rawAuthor;
+        const prFiles = (pr.files || []).map(f => typeof f === 'string' ? f : (f.path || '')).filter(Boolean);
+        const risk = (pr.riskLevel || 'low').toUpperCase();
+
+        p += `### ${idx + 1}. PR #${pr.number}: ${pr.title}\n`;
+        p += `- **Author**: @${author}\n`;
+        p += `- **Direct Link**: https://github.com/boykopovar/AnyPS5/pull/${pr.number}\n`;
+        p += `- **Assessed Risk Level**: \`${risk}\`${pr.riskReason ? ` (${pr.riskReason})` : ''}\n`;
+        p += `- **Diff Churn**: +${pr.additions || 0} / -${pr.deletions || 0} lines (${prFiles.length} files)\n`;
+        p += `- **Modified Files**:\n`;
+        if (prFiles.length > 0) {
+            prFiles.forEach(pf => { p += `  - \`${pf}\`\n`; });
+        } else {
+            p += `  - *(Core internal module files)*\n`;
+        }
+        p += `\n`;
+    });
+
+    p += `---\n\n`;
+    p += `## 🛡️ STRICT EMULATION REVIEW DIRECTIVES & INVARIANTS\n\n`;
+    p += `Evaluate this batch against critical PS5 emulation architecture principles:\n\n`;
+    p += `1. **Concurrency & Thread Safety**:\n`;
+    p += `   - Check for data races, mutex deadlocks, lock inversion, or incorrect atomic memory orderings (\`std::memory_order_relaxed\` vs \`acquire/release\`).\n`;
+    p += `   - AnyPS5 runs high-throughput multithreaded guest jobs (FreeBSD kernel worker threads, AGC command buffers). Verify all shared state is protected.\n\n`;
+    p += `2. **FreeBSD & PS5 Kernel ABI Fidelity**:\n`;
+    p += `   - Verify that system calls, ioctls, and POSIX shims strictly match FreeBSD 12/13 ABI semantics and return appropriate negative errno codes where expected.\n`;
+    p += `   - Guard against structure padding, endianness assumptions, and 64-bit pointer truncation.\n\n`;
+    p += `3. **Graphics (AGC) & Shader Translation Invariants** (if applicable to ${batch.category}):\n`;
+    p += `   - Ensure descriptor indexing bounds checks, uniform buffer alignments, and Vulkan/GCN pipeline barriers are sound.\n`;
+    p += `   - Verify shader disk cache serialization does not introduce disk corruption or stale key collisions.\n\n`;
+    p += `4. **Cross-PR Semantic Side-Effects**:\n`;
+    p += `   - While the files are strictly physically disjoint, verify whether any PR introduces assumptions, global state changes, or build flag dependencies that could impact neighboring modules.\n\n`;
+    p += `5. **Resource Management**:\n`;
+    p += `   - Verify zero memory leaks (prefer RAII, \`std::unique_ptr\`, \`std::shared_ptr\`).\n`;
+    p += `   - Validate bounds checking on guest pointer offsets and packet buffers.\n\n`;
+
+    p += `---\n\n`;
+    p += `## 📋 REQUIRED OUTPUT FORMAT\n\n`;
+    p += `Please organize your response strictly into the following sections:\n\n`;
+    p += `### 1. Executive Batch Summary\n`;
+    p += `A concise 2-3 paragraph synthesis of the batch's architectural impact, overall stability, and risk level.\n\n`;
+    p += `### 2. PR-by-PR Evaluation Table\n`;
+    p += `| PR # | Title | Risk | Verdict (Approve / Request Changes / Needs Benchmarking) | Key Notes |\n`;
+    p += `|:---:|:---|:---:|:---:|:---|n`;
+    prs.forEach(pr => {
+        const cleanTitle = (pr.title || '').replace(/\|/g, '-').slice(0, 55);
+        p += `| #${pr.number} | ${cleanTitle} | \`${(pr.riskLevel || 'low').toUpperCase()}\` | **[VERDICT]** | [1-sentence assessment] |\n`;
+    });
+    p += `\n`;
+    p += `### 3. Detailed Findings & Potential Regressions\n`;
+    p += `Highlight any suspicious code patterns, missing edge cases, or suggested defensive assertions for any specific PRs.\n\n`;
+    p += `### 4. Sequential Merge Recommendation\n`;
+    p += `Provide the optimal sequential merge order or confirmation to squash-merge with \`gh pr merge\`:\n`;
+    p += `\`\`\`bash\n# Recommended Sequence\n`;
+    prs.forEach(pr => {
+        p += `gh pr merge ${pr.number} --repo boykopovar/AnyPS5 --auto --squash --delete-branch\n`;
+    });
+    p += `\`\`\`\n`;
+
+    return p;
+}
+
+function copyBatchAIPrompt(batchId, event) {
+    if (event) event.stopPropagation();
+    const batch = state.minibatches.find(b => b.id === batchId);
+    if (!batch) return;
+
+    const prompt = generateBatchAIPrompt(batchId);
+    copyTextToClipboard(prompt, `🤖 AI Prompt za "${batch.title}" kopiran! Zalijepi u Claude / GPT / Gemini.`);
 }
 
 function togglePRInBatch(batchId, prNumber, checked) {
@@ -688,29 +1058,60 @@ function addBatchToReviewWatchlist(batchId) {
     showToast(`Dodano ${batch.prNumbers.length} PR-ova iz "${batch.title}" u tvoj radni pregled!`);
 }
 
-// Modal for Batch CLI script (Merge for Maintainers, Local test for Reviewers)
-function openBatchScriptModal(batchId) {
+// Modal for Batch Tools (AI Review Prompt, CLI Merge, and CLI Test)
+function openBatchScriptModal(batchId, initialTab = 'ai-prompt') {
     const batch = state.minibatches.find(b => b.id === batchId);
     if (!batch) return;
 
+    state.activeBatchForModal = batch;
+    state.activeBatchModalTab = initialTab;
+
     const modal = document.getElementById('batch-script-modal');
     const title = document.getElementById('batch-script-title');
+    if (!modal || !title) return;
+
+    title.innerText = `${batch.title} (${batch.prNumbers.length} PR-ova)`;
+    switchBatchModalTab(initialTab);
+
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+}
+
+function switchBatchModalTab(tab) {
+    state.activeBatchModalTab = tab;
+    const batch = state.activeBatchForModal;
+    if (!batch) return;
+
+    const tabAi = document.getElementById('modal-tab-ai');
+    const tabMerge = document.getElementById('modal-tab-merge');
+    const tabTest = document.getElementById('modal-tab-test');
     const desc = document.getElementById('batch-script-desc');
     const hint = document.getElementById('batch-script-hint');
     const textarea = document.getElementById('batch-script-textarea');
-    if (!modal || !title || !textarea) return;
+    const btnText = document.getElementById('batch-script-copy-btn-text');
 
-    const selectedNums = Array.from(batch.selectedPRs);
-    const isM = isCurrentUserMaintainer();
+    const inactiveClass = 'px-3 py-1.5 rounded-lg text-xs font-medium transition text-slate-400 hover:text-slate-200 border border-transparent hover:bg-slate-800 flex items-center gap-1.5 whitespace-nowrap';
+    const activeClass = 'px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-cyan-950 text-cyan-300 border border-cyan-800 flex items-center gap-1.5 whitespace-nowrap shadow-sm';
 
-    if (isM) {
-        title.innerText = `CLI Merge: ${batch.title} (${selectedNums.length} PR-ova)`;
+    if (tabAi) tabAi.className = tab === 'ai-prompt' ? activeClass : inactiveClass;
+    if (tabMerge) tabMerge.className = tab === 'merge' ? activeClass : inactiveClass;
+    if (tabTest) tabTest.className = tab === 'test' ? activeClass : inactiveClass;
+
+    const selectedNums = Array.from(batch.selectedPRs || batch.prNumbers || []);
+
+    if (tab === 'ai-prompt') {
+        if (desc) desc.innerText = 'Ovaj deterministički prompt sadrži kompletan kontekst, popis disjunktnih datoteka, PS5 arhitekturne smjernice i tablicu recenzije. Spreman je za slanje modelima poput Claude 3.7 Sonnet, OpenAI o3/GPT-4o ili Gemini Pro.';
+        if (hint) hint.innerHTML = '100% deterministički prompt (0 API troška) – zalijepite u AI chat za dubinski pregled batcha.';
+        if (btnText) btnText.innerText = 'Kopiraj AI Prompt';
+        if (textarea) textarea.value = generateBatchAIPrompt(batch.id);
+    } else if (tab === 'merge') {
         if (desc) desc.innerText = 'Ova skripta sekvencijalno spaja sve odabrane PR-ove iz ovog batcha. Budući da su datoteke disjunktne, spajanje prolazi 100% bez međusobnih konflikata!';
         if (hint) hint.innerHTML = 'Kopirajte i pokrenite u terminalu s <code class="text-slate-400 font-mono">gh</code> CLI.';
+        if (btnText) btnText.innerText = 'Kopiraj Merge Skriptu';
 
-        let script = `# AnyPS5 Minibatch CLI Merge Sequence (Maintainer Mode)\n`;
+        let script = `# AnyPS5 Minibatch CLI Merge Sequence\n`;
         script += `# Paket: ${batch.title} (${batch.category})\n`;
-        script += `# Kompleksnost: ${batch.complexityLabel} • Disjunktne datoteke: 100% Sigurno za spajanje\n`;
+        script += `# Kompleksnost: ${batch.complexityLabel || batch.complexity} • Disjunktne datoteke: 100% Sigurno za spajanje\n`;
         script += `# Generirano: ${new Date().toISOString()}\n\n`;
 
         selectedNums.forEach(num => {
@@ -719,17 +1120,15 @@ function openBatchScriptModal(batchId) {
             script += `# PR #${num}: ${prTitle}\n`;
             script += `gh pr merge ${num} --repo boykopovar/AnyPS5 --auto --squash --delete-branch\n\n`;
         });
-        textarea.value = script;
-    } else {
-        title.innerText = `CLI Testiranje Paketa: ${batch.title} (${selectedNums.length} PR-ova)`;
-        if (desc) desc.innerText = 'Kao Community Reviewer, ova skripta ti omogućuje lokalno preuzimanje i testiranje grana svih PR-ova iz ovog paketa bez diranja glavne grane:';
+        if (textarea) textarea.value = script;
+    } else if (tab === 'test') {
+        if (desc) desc.innerText = 'Kao reviewer ili maintainer, ova skripta omogućuje lokalno preuzimanje grana i kompilaciju svih PR-ova iz ovog paketa:';
         if (hint) hint.innerHTML = 'Kopirajte i pokrenite u AnyPS5 lokalnom repozitoriju za kompilaciju i testiranje.';
+        if (btnText) btnText.innerText = 'Kopiraj Test Skriptu';
 
-        let script = `# AnyPS5 Minibatch Local Test Sequence (Community Reviewer Mode)\n`;
+        let script = `# AnyPS5 Minibatch Local Test Sequence\n`;
         script += `# Paket: ${batch.title} (${batch.category})\n`;
-        script += `# Kompleksnost: ${batch.complexityLabel}\n`;
         script += `# Generirano: ${new Date().toISOString()}\n\n`;
-        script += `# 1. Kreiraj lokalnu testnu granu za ovaj paket:\n`;
         script += `git fetch origin\n`;
         script += `git checkout -b test-${batch.id}\n\n`;
 
@@ -738,15 +1137,11 @@ function openBatchScriptModal(batchId) {
             const prTitle = pr ? pr.title.replace(/[\r\n]+/g, ' ') : '';
             script += `# PR #${num}: ${prTitle}\n`;
             script += `gh pr checkout ${num}\n`;
-            script += `# Kompiliraj i pokreni testove:\n`;
             script += `cmake --build build --config Release\n`;
             script += `ctest --test-dir build --output-on-failure\n\n`;
         });
-        textarea.value = script;
+        if (textarea) textarea.value = script;
     }
-
-    modal.classList.remove('hidden');
-    modal.classList.add('flex');
 }
 
 function closeBatchScriptModal() {
@@ -760,7 +1155,11 @@ function closeBatchScriptModal() {
 function copyBatchScriptText() {
     const textarea = document.getElementById('batch-script-textarea');
     if (textarea) {
-        copyTextToClipboard(textarea.value, 'Kopirana CLI skripta za batch merge!');
+        const isAi = state.activeBatchModalTab === 'ai-prompt';
+        const msg = isAi 
+            ? '🤖 AI Prompt kopiran u međuspremnik! Zalijepi u Claude / GPT / Gemini.'
+            : '💻 CLI skripta kopirana u međuspremnik!';
+        copyTextToClipboard(textarea.value, msg);
         closeBatchScriptModal();
     }
 }
@@ -1164,6 +1563,44 @@ function openInspectModal(prNumber) {
     document.getElementById('inspect-pr-risk').innerHTML = getRiskBadge(pr.riskLevel);
     document.getElementById('inspect-github-link').href = pr.url;
 
+    // Live GitHub PR Status Badge
+    const liveBadge = document.getElementById('inspect-github-live-badge');
+    const liveText = document.getElementById('inspect-github-live-text');
+    if (liveBadge && liveText) {
+        liveBadge.className = 'px-2 py-0.5 rounded text-[10px] font-mono bg-slate-900 border border-slate-700 text-slate-300 flex items-center gap-1';
+        liveBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"></span><span id="inspect-github-live-text">GitHub API: provjera...</span>';
+        
+        GitHubClient.fetchLivePR(pr.number).then(liveData => {
+            if (!state.activeInspectPR || state.activeInspectPR.number !== pr.number) return;
+            const textEl = document.getElementById('inspect-github-live-text');
+            if (!liveData) {
+                if (textEl) textEl.innerText = `GitHub: #${pr.number}`;
+                return;
+            }
+            if (liveData.merged) {
+                liveBadge.className = 'px-2 py-0.5 rounded text-[10px] font-mono bg-purple-950 border border-purple-700 text-purple-300 flex items-center gap-1';
+                liveBadge.innerHTML = '🟣 <span>GitHub: Spojen (Merged)</span>';
+            } else if (liveData.state === 'closed') {
+                liveBadge.className = 'px-2 py-0.5 rounded text-[10px] font-mono bg-rose-950 border border-rose-700 text-rose-300 flex items-center gap-1';
+                liveBadge.innerHTML = '🔴 <span>GitHub: Zatvoren (Closed)</span>';
+            } else {
+                if (liveData.mergeable === true) {
+                    liveBadge.className = 'px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-950 border border-emerald-700 text-emerald-300 flex items-center gap-1';
+                    liveBadge.innerHTML = '🟢 <span>GitHub: Otvoren (Bez konflikata)</span>';
+                } else if (liveData.mergeable === false) {
+                    liveBadge.className = 'px-2 py-0.5 rounded text-[10px] font-mono bg-amber-950 border border-amber-700 text-amber-300 flex items-center gap-1';
+                    liveBadge.innerHTML = '⚠️ <span>GitHub: Konflikt na grani</span>';
+                } else {
+                    liveBadge.className = 'px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-950 border border-cyan-700 text-cyan-300 flex items-center gap-1';
+                    liveBadge.innerHTML = '🟢 <span>GitHub: Otvoren (Open)</span>';
+                }
+            }
+        }).catch(() => {
+            const textEl = document.getElementById('inspect-github-live-text');
+            if (textEl) textEl.innerText = `GitHub: #${pr.number}`;
+        });
+    }
+
     // Role Indicator Chip in Inspect Modal
     const roleChip = document.getElementById('inspect-user-role-chip');
     const tool4Title = document.getElementById('inspect-tool4-title');
@@ -1475,8 +1912,95 @@ function renderRepoTable() {
 }
 
 // ==========================================
-// GITHUB AUTHENTICATION & ROLE MANAGEMENT
+// GITHUB REST API CLIENT & AUTHENTICATION
 // ==========================================
+
+const GitHubClient = {
+    repoOwner: 'boykopovar',
+    repoName: 'AnyPS5',
+
+    getHeaders(token = state.currentUser?.token) {
+        const headers = {
+            'Accept': 'application/vnd.github.v3+json'
+        };
+        if (token) {
+            headers['Authorization'] = `token ${token}`;
+        }
+        return headers;
+    },
+
+    async fetchPublicProfile(username) {
+        try {
+            const res = await fetch(`https://api.github.com/users/${encodeURIComponent(username)}`, {
+                headers: this.getHeaders()
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return await res.json();
+        } catch (e) {
+            console.warn('fetchPublicProfile error:', e);
+            return null;
+        }
+    },
+
+    async fetchAuthenticatedUser(token) {
+        try {
+            const res = await fetch('https://api.github.com/user', {
+                headers: this.getHeaders(token)
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return await res.json();
+        } catch (e) {
+            console.warn('fetchAuthenticatedUser error:', e);
+            return null;
+        }
+    },
+
+    async checkRepoPermissions(token) {
+        try {
+            const res = await fetch(`https://api.github.com/repos/${this.repoOwner}/${this.repoName}`, {
+                headers: this.getHeaders(token)
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            return data.permissions || null;
+        } catch (e) {
+            console.warn('checkRepoPermissions error:', e);
+            return null;
+        }
+    },
+
+    async fetchLivePR(prNumber) {
+        try {
+            const res = await fetch(`https://api.github.com/repos/${this.repoOwner}/${this.repoName}/pulls/${prNumber}`, {
+                headers: this.getHeaders()
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return await res.json();
+        } catch (e) {
+            console.warn('fetchLivePR error:', e);
+            return null;
+        }
+    },
+
+    async postPRComment(prNumber, commentBody, token = state.currentUser?.token) {
+        if (!token) {
+            throw new Error('Nema unesenog GitHub tokena. Unesi token u prozoru za prijavu.');
+        }
+        const res = await fetch(`https://api.github.com/repos/${this.repoOwner}/${this.repoName}/issues/${prNumber}/comments`, {
+            method: 'POST',
+            headers: {
+                ...this.getHeaders(token),
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ body: commentBody })
+        });
+        if (!res.ok) {
+            const errJson = await res.json().catch(() => ({}));
+            throw new Error(errJson.message || `GitHub API greška HTTP ${res.status}`);
+        }
+        return await res.json();
+    }
+};
 
 function openGitHubLoginModal() {
     const modal = document.getElementById('github-login-modal');
@@ -1496,6 +2020,118 @@ function closeGitHubLoginModal() {
     }
 }
 
+// ⚡ 1-Klik Brza Autorizacija putem GitHub API-ja
+async function oneClickLogin(username, forcedRole = null) {
+    showToast(`⚡ Spajanje s GitHub API-jem za @${username}...`);
+    await loginWithGitHub(username, state.currentUser.token || '', forcedRole);
+    closeGitHubLoginModal();
+}
+
+// 🔑 Provjera i povezivanje GitHub API tokena
+async function verifyAndConnectGitHubToken() {
+    const tokenInput = document.getElementById('github-token-input');
+    const token = tokenInput?.value?.trim() || '';
+    if (!token) {
+        showToast('Molimo unesi GitHub token');
+        return;
+    }
+
+    showToast('🔑 Provjera GitHub API tokena...');
+    try {
+        const user = await GitHubClient.fetchAuthenticatedUser(token);
+        if (!user || !user.login) {
+            showToast('❌ Nevažeći GitHub token ili je istekao!');
+            return;
+        }
+
+        const perms = await GitHubClient.checkRepoPermissions(token);
+        const hasRepoWrite = perms && (perms.push || perms.maintain || perms.admin);
+        const isMaintainer = hasRepoWrite || KNOWN_MAINTAINERS.map(m => m.toLowerCase()).includes(user.login.toLowerCase());
+
+        state.currentUser = {
+            username: user.login,
+            name: user.name || user.login,
+            avatar: user.avatar_url || `https://github.com/${user.login}.png`,
+            role: isMaintainer ? 'maintainer' : 'reviewer',
+            token: token
+        };
+        state.currentMaintainer = user.login;
+
+        savePersistentUser();
+        updateUserUI();
+        renderMyPRs();
+        renderMinibatches();
+        renderRepoTable();
+
+        showToast(`🎉 Povezan GitHub račun: @${user.login} (${isMaintainer ? 'Maintainer' : 'Reviewer'})`);
+    } catch (e) {
+        console.error('verifyAndConnectGitHubToken error:', e);
+        showToast(`❌ Greška pri provjeri tokena: ${e.message}`);
+    }
+}
+
+// 🚀 1-Klik Objava recenzije izravno na GitHub PR preko API-ja
+async function postReviewToGitHubViaAPI() {
+    if (!state.activeInspectPR) return;
+    const pr = state.activeInspectPR;
+
+    if (!state.currentUser.token) {
+        const proceed = confirm(`Za izravnu objavu recenzije na GitHub AnyPS5 repozitoriju potreban je GitHub API Token (npr. iz 'gh auth token' ili Personal Access Token sa repo pristupom).\n\nŽeliš li sada unijeti GitHub token?`);
+        if (proceed) {
+            openGitHubLoginModal();
+            setTimeout(() => {
+                document.getElementById('github-token-input')?.focus();
+            }, 250);
+        }
+        return;
+    }
+
+    const chk = getChecklistState();
+    const notes = document.getElementById('inspect-notes-field')?.value || '';
+    const rec = state.activeReviewerRecommendation || 'approve';
+
+    const recLabels = {
+        'approve': '✅ Preporučujem spajanje (LGTM)',
+        'changes': '⚠️ Predlažem dorade prije spajanja',
+        'issue': '🚫 Prijavljena greška / problem u kodu'
+    };
+
+    let md = `### 🔍 AnyPS5 Recenzija Koda\n\n`;
+    md += `**Recenzent:** @${state.currentUser.username} (${isCurrentUserMaintainer() ? '🛡️ Maintainer' : '🔍 Community Reviewer'})\n`;
+    md += `**Preporuka:** ${recLabels[rec] || recLabels.approve}\n\n`;
+    md += `#### 📋 Provjera AnyPS5 standarda kvalitete:\n`;
+    md += `- [${chk.build ? 'x' : ' '}] Kompilacija prolazi (CMakeLists / Clang / MSVC)\n`;
+    md += `- [${chk.types ? 'x' : ' '}] Provjereni SCE firmware potpisi i tipovi struktura\n`;
+    md += `- [${chk.locks ? 'x' : ' '}] Nema race conditiona / dretveni lockovi se ispravno oslobađaju\n`;
+    md += `- [${chk.tests ? 'x' : ' '}] Uključeni testovi i provjera regresije\n\n`;
+
+    if (notes.trim()) {
+        md += `#### 📝 Zabilješke s testiranja:\n${notes.trim()}\n\n`;
+    }
+
+    md += `*Objavljeno izravno putem [AnyPS5 Maintainer Workspace](https://ivica00.github.io/anyps5-maintainer-hub/) s 1-Klik GitHub API integracijom.*`;
+
+    const btn = document.getElementById('btn-api-submit');
+    const originalText = btn ? btn.innerHTML : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `<span class="animate-spin inline-block">⏳</span> Objavljivanje na GitHub...`;
+    }
+
+    try {
+        await GitHubClient.postPRComment(pr.number, md, state.currentUser.token);
+        showToast(`🚀 Recenzija uspješno objavljena na GitHubu za PR #${pr.number}!`);
+        await saveInspectionAndClose();
+    } catch (err) {
+        console.error('postReviewToGitHubViaAPI error:', err);
+        showToast(`❌ Greška pri objavi: ${err.message}`);
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        }
+    }
+}
+
 async function handleGitHubUsernameLogin() {
     const input = document.getElementById('github-username-input');
     const tokenInput = document.getElementById('github-token-input');
@@ -1507,11 +2143,10 @@ async function handleGitHubUsernameLogin() {
 
 function quickSelectUser(username) {
     if (username === 'community_user') {
-        loginWithGitHub('AnyPS5-Contributor', '', 'reviewer');
+        oneClickLogin('AnyPS5-Contributor', 'reviewer');
     } else {
-        loginWithGitHub(username);
+        oneClickLogin(username);
     }
-    closeGitHubLoginModal();
 }
 
 function toggleRolePreview() {
@@ -1541,33 +2176,16 @@ async function loginWithGitHub(username, token = '', forcedRole = null) {
     let avatar = `https://github.com/${cleanUser}.png`;
     let isMaintainer = forcedRole ? (forcedRole === 'maintainer') : KNOWN_MAINTAINERS.map(m => m.toLowerCase()).includes(cleanUser.toLowerCase());
 
-    try {
-        const res = await fetch(`https://api.github.com/users/${cleanUser}`);
-        if (res.ok) {
-            const data = await res.json();
-            if (data.avatar_url) avatar = data.avatar_url;
-            if (data.name) name = data.name;
-        }
-    } catch (e) {
-        console.warn('GitHub user fetch error:', e);
+    const profile = await GitHubClient.fetchPublicProfile(cleanUser);
+    if (profile) {
+        if (profile.avatar_url) avatar = profile.avatar_url;
+        if (profile.name) name = profile.name;
     }
 
     if (token) {
-        try {
-            const repoRes = await fetch('https://api.github.com/repos/boykopovar/AnyPS5', {
-                headers: {
-                    'Authorization': `token ${token}`,
-                    'User-Agent': 'AnyPS5-Hub'
-                }
-            });
-            if (repoRes.ok) {
-                const repoData = await repoRes.json();
-                if (repoData.permissions && (repoData.permissions.push || repoData.permissions.maintain || repoData.permissions.admin)) {
-                    isMaintainer = true;
-                }
-            }
-        } catch (e) {
-            console.warn('GitHub token check error:', e);
+        const perms = await GitHubClient.checkRepoPermissions(token);
+        if (perms && (perms.push || perms.maintain || perms.admin)) {
+            isMaintainer = true;
         }
     }
 
