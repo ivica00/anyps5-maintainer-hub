@@ -12,15 +12,27 @@
             theme: {
                 extend: {
                     colors: {
-                        obsidian: '#090d16',
-                        darkpanel: '#0e1524',
-                        cardbg: '#141d30',
+                        obsidian: '#050813',
+                        darkpanel: '#090e1d',
+                        cardbg: '#0e162a',
+                        ps5: {
+                            blue: '#00439c',
+                            electric: '#0070d1',
+                            glow: '#00b4ff',
+                            ceramic: '#f5f7fb',
+                            muted: '#8e9bb0',
+                            dark: '#030611',
+                            triangle: '#00f076',
+                            circle: '#ff3b5c',
+                            cross: '#0070d1',
+                            square: '#d946ef'
+                        },
                         accent: {
-                            cyan: '#00e5ff',
+                            cyan: '#00b4ff',
                             purple: '#a855f7',
-                            emerald: '#10b981',
+                            emerald: '#00f076',
                             amber: '#f59e0b',
-                            rose: '#f43f5e'
+                            rose: '#ff3b5c'
                         }
                     },
                     fontFamily: {
@@ -34,76 +46,102 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         ::-webkit-scrollbar { width: 6px; height: 6px; }
-        ::-webkit-scrollbar-track { background: #090d16; }
+        ::-webkit-scrollbar-track { background: #050813; }
         ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #334155; }
+        ::-webkit-scrollbar-thumb:hover { background: #0070d1; }
+        .ps5-glow {
+            box-shadow: 0 0 25px -4px rgba(0, 112, 209, 0.4);
+        }
+        .ps5-glow-sm {
+            box-shadow: 0 0 14px -2px rgba(0, 180, 255, 0.3);
+        }
+        .ps5-lightbar {
+            position: relative;
+        }
+        .ps5-lightbar::after {
+            content: '';
+            position: absolute;
+            bottom: -1px;
+            left: 0;
+            right: 0;
+            height: 1.5px;
+            background: linear-gradient(90deg, transparent 0%, #00439c 20%, #0070d1 40%, #00b4ff 50%, #0070d1 60%, #00439c 80%, transparent 100%);
+            box-shadow: 0 0 12px #00b4ff;
+        }
         .tab-btn.active {
-            background-color: #1e293b;
-            color: #00e5ff;
-            border-color: #00e5ff;
+            background: linear-gradient(180deg, rgba(0, 112, 209, 0.25) 0%, rgba(9, 14, 28, 0.8) 100%);
+            color: #00b4ff;
+            border-color: #0070d1;
+            box-shadow: 0 0 15px -3px rgba(0, 112, 209, 0.35);
         }
         /* Mobile tap highlight reset */
         * { -webkit-tap-highlight-color: transparent; }
     </style>
 </head>
-<body class="bg-obsidian text-slate-200 min-h-screen flex flex-col font-sans selection:bg-cyan-500/30 selection:text-cyan-200">
+<body class="bg-obsidian text-slate-200 min-h-screen flex flex-col font-sans selection:bg-blue-600/40 selection:text-cyan-200">
 
-    <!-- Top Responsive Navigation Bar -->
-    <header class="border-b border-slate-800/80 bg-darkpanel/95 backdrop-blur sticky top-0 z-40">
-        <div class="max-w-6xl mx-auto px-3 sm:px-6 lg:px-8 py-2.5 sm:py-3">
+    <!-- Top Responsive Navigation Bar (PS5 DualSense LED Edition) -->
+    <header class="border-b border-blue-900/40 bg-darkpanel/95 backdrop-blur sticky top-0 z-40 ps5-lightbar">
+        <div class="max-w-[1560px] mx-auto px-3 sm:px-6 lg:px-8 py-2.5 sm:py-3">
             <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
                 <!-- Branding & Supabase Status -->
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-2.5">
-                        <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center font-black text-white text-base shadow-lg shadow-cyan-500/20 flex-shrink-0">
+                <div class="flex items-center justify-between gap-4">
+                    <div class="flex items-center gap-3">
+                        <!-- PS5 Glowing Crest -->
+                        <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-700 via-blue-600 to-cyan-400 flex items-center justify-center font-black text-white text-lg ps5-glow flex-shrink-0 border border-white/20">
                             Ψ
                         </div>
                         <div>
                             <div class="flex items-center gap-2 flex-wrap">
-                                <span class="font-bold text-slate-100 text-base tracking-tight">AnyPS5</span>
-                                <span class="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800 font-mono">Maintainer Workspace</span>
+                                <a href="https://github.com/boykopovar/AnyPS5" target="_blank" class="font-bold text-white text-base tracking-tight hover:text-cyan-300 transition flex items-center gap-1.5">
+                                    <span>boykopovar</span><span class="text-slate-500">/</span><span class="text-cyan-400">AnyPS5</span>
+                                </a>
+                                <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-950/80 text-blue-300 border border-blue-700/60 font-mono">Public</span>
+                                <span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-900 text-slate-400 border border-slate-800 font-mono hidden lg:inline-block">
+                                    🎮 PlayStation 5 Emulator Hub
+                                </span>
                             </div>
                         </div>
                     </div>
 
                     <!-- Connection Status Badge (Clickable to force sync) -->
                     <button onclick="refreshDataFromSupabase(true)" title="Klikni za ručno osvježavanje iz Supabasea" 
-                            id="supabase-status-pill" class="text-[10px] px-2.5 py-1 rounded-full bg-slate-900 text-slate-400 border border-slate-800 font-mono flex items-center gap-1.5 hover:border-slate-700 transition cursor-pointer">
+                            id="supabase-status-pill" class="text-[10px] px-2.5 py-1 rounded-full bg-slate-900/90 text-slate-300 border border-blue-900/60 font-mono flex items-center gap-1.5 hover:border-cyan-400 transition cursor-pointer shadow-sm">
                         <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
-                        <span id="supabase-status-text">Spajanje...</span>
+                        <span id="supabase-status-text">Supabase Live</span>
                     </button>
                 </div>
 
                 <!-- Maintainer Selector & Tab Switcher (Fully Responsive) -->
-                <div class="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full md:w-auto">
+                <div class="flex flex-wrap sm:flex-nowrap items-center gap-2.5 w-full md:w-auto">
                     <!-- GitHub Profile & Role Pill Button -->
                     <button onclick="openGitHubLoginModal()" id="github-auth-btn" title="Klikni za GitHub prijavu ili profil"
-                            class="flex-1 sm:flex-initial flex items-center justify-between sm:justify-start gap-2 bg-slate-900 hover:bg-slate-800 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs transition cursor-pointer shadow-sm">
+                            class="flex-1 sm:flex-initial flex items-center justify-between sm:justify-start gap-2 bg-slate-900/90 hover:bg-slate-800 border border-blue-800/50 hover:border-cyan-400 rounded-xl px-3 py-1.5 text-xs transition cursor-pointer shadow-sm">
                         <!-- Logged In User View -->
                         <div class="flex items-center gap-2 min-w-0" id="header-user-info">
-                            <img id="header-user-avatar" src="https://github.com/boykopovar.png" class="w-5 h-5 rounded-full border border-slate-700 flex-shrink-0" alt="avatar">
+                            <img id="header-user-avatar" src="https://github.com/boykopovar.png" class="w-6 h-6 rounded-full border border-blue-400 flex-shrink-0" alt="avatar">
                             <span id="header-username" class="font-bold text-slate-100 font-mono text-xs truncate">@boykopovar</span>
                         </div>
                         <div class="flex items-center gap-1.5" id="header-user-badge-wrap">
-                            <span id="header-role-badge" class="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800 whitespace-nowrap">🛡️ Maintainer</span>
+                            <span id="header-role-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-950 text-cyan-300 border border-blue-700 whitespace-nowrap">🛡️ Maintainer</span>
                             <span class="text-slate-500 text-[9px]">▼</span>
                         </div>
                         <!-- Logged Out View -->
-                        <div id="header-login-prompt" class="hidden items-center gap-1.5 text-emerald-400 font-semibold">
+                        <div id="header-login-prompt" class="hidden items-center gap-1.5 text-cyan-300 font-semibold">
                             <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
                             <span>Prijavi se s GitHub-om</span>
                         </div>
                     </button>
 
                     <!-- View Switcher Tabs -->
-                    <div class="flex p-0.5 bg-slate-900 border border-slate-800 rounded-lg text-xs font-medium w-full sm:w-auto justify-center flex-wrap sm:flex-nowrap gap-0.5">
-                        <button id="view-tab-mine" onclick="switchMainView('mine')" class="tab-btn active flex-1 sm:flex-initial px-2.5 sm:px-3 py-1.5 rounded-md transition flex items-center justify-center gap-1.5 border border-transparent whitespace-nowrap">
+                    <div class="flex p-0.5 bg-slate-950/80 border border-slate-800 rounded-xl text-xs font-medium w-full sm:w-auto justify-center flex-wrap sm:flex-nowrap gap-0.5">
+                        <button id="view-tab-mine" onclick="switchMainView('mine')" class="tab-btn active flex-1 sm:flex-initial px-3 sm:px-3.5 py-1.5 rounded-lg transition flex items-center justify-center gap-1.5 border border-transparent whitespace-nowrap">
                             <span id="tab-mine-icon">👤</span> <span id="tab-mine-title">Moji PR-ovi</span> (<span id="my-pr-count-badge">0</span>)
                         </button>
-                        <button id="view-tab-batches" onclick="switchMainView('batches')" class="tab-btn flex-1 sm:flex-initial px-2.5 sm:px-3 py-1.5 rounded-md transition text-slate-400 hover:text-slate-200 border border-transparent flex items-center justify-center gap-1.5 whitespace-nowrap">
+                        <button id="view-tab-batches" onclick="switchMainView('batches')" class="tab-btn flex-1 sm:flex-initial px-3 sm:px-3.5 py-1.5 rounded-lg transition text-slate-400 hover:text-slate-200 border border-transparent flex items-center justify-center gap-1.5 whitespace-nowrap">
                             <span>⚡</span> Minibatches (<span id="batches-count-badge">0</span>)
                         </button>
-                        <button id="view-tab-repo" onclick="switchMainView('repo')" class="tab-btn flex-1 sm:flex-initial px-2.5 sm:px-3 py-1.5 rounded-md transition text-slate-400 hover:text-slate-200 border border-transparent flex items-center justify-center gap-1.5 whitespace-nowrap">
+                        <button id="view-tab-repo" onclick="switchMainView('repo')" class="tab-btn flex-1 sm:flex-initial px-3 sm:px-3.5 py-1.5 rounded-lg transition text-slate-400 hover:text-slate-200 border border-transparent flex items-center justify-center gap-1.5 whitespace-nowrap">
                             <span>🌐</span> Cijeli repo (<span id="repo-total-count-badge">808</span>)
                         </button>
                     </div>
@@ -112,36 +150,44 @@
         </div>
     </header>
 
-    <!-- Main Container -->
-    <main class="max-w-6xl mx-auto px-3 sm:px-6 lg:px-8 py-5 sm:py-7 flex-1 w-full space-y-5">
+    <!-- Main Container (PlayStation 5 Wide Horizon Layout) -->
+    <main class="max-w-[1560px] mx-auto px-3 sm:px-6 lg:px-8 py-5 sm:py-6 flex-1 w-full">
 
-        <!-- ================= VIEW 1: MOJI PR-OVI (DEFAULT FOCUS) ================= -->
-        <section id="view-mine-section" class="space-y-5">
-            
-            <!-- Hero Action Banner -->
-            <div class="p-4 sm:p-6 rounded-2xl bg-gradient-to-r from-cardbg via-darkpanel to-cardbg border border-slate-800 shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                <div class="space-y-1">
-                    <div class="flex items-center gap-2 flex-wrap">
-                        <h2 class="text-lg sm:text-xl font-bold text-slate-100 flex items-center gap-2">
-                            <span>👋</span> Dobrodošao, <span id="hero-maintainer-name" class="text-cyan-400 font-mono">@boykopovar</span>
-                        </h2>
-                        <span id="hero-role-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">
-                            🛡️ Službeni Maintainer
-                        </span>
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+
+            <!-- LEFT WORKSPACE COLUMN (Views 1, 2, 3) -->
+            <div class="lg:col-span-8 xl:col-span-9 space-y-6">
+
+                <!-- ================= VIEW 1: MOJI PR-OVI (DEFAULT FOCUS) ================= -->
+                <section id="view-mine-section" class="space-y-5">
+                    
+                    <!-- Hero Action Banner (PS5 Ceramic Dark Panel) -->
+                    <div class="p-5 sm:p-6 rounded-2xl bg-gradient-to-r from-[#001533]/80 via-darkpanel to-[#001533]/50 border border-blue-900/50 shadow-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 relative overflow-hidden">
+                        <!-- DualSense LED Glow Trim -->
+                        <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-600 via-cyan-400 to-blue-600"></div>
+
+                        <div class="space-y-1.5">
+                            <div class="flex items-center gap-2.5 flex-wrap">
+                                <h2 class="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
+                                    <span>👋</span> Dobrodošao, <span id="hero-maintainer-name" class="text-cyan-400 font-mono">@boykopovar</span>
+                                </h2>
+                                <span id="hero-role-badge" class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-950 text-cyan-300 border border-blue-700 font-mono">
+                                    🛡️ Službeni Maintainer
+                                </span>
+                            </div>
+                            <p id="hero-maintainer-desc" class="text-xs sm:text-sm text-slate-300">
+                                Ovdje se nalaze PR-ovi dodijeljeni tebi za pregled i testiranje. Sinkronizirano sa Supabaseom u stvarnom vremenu.
+                            </p>
+                        </div>
+
+                        <div class="flex items-center gap-2.5 w-full sm:w-auto">
+                            <!-- Primary Action Button (PlayStation Blue LED) -->
+                            <button id="hero-action-btn" onclick="handleHeroAction()" class="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-700 via-blue-600 to-cyan-500 hover:from-blue-600 hover:to-cyan-400 active:scale-95 text-white font-bold text-xs sm:text-sm shadow-lg shadow-blue-700/30 transition flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                                <span id="hero-action-btn-text">Preuzmi nove PR-ove za sebe</span>
+                            </button>
+                        </div>
                     </div>
-                    <p id="hero-maintainer-desc" class="text-xs sm:text-sm text-slate-400">
-                        Ovdje se nalaze PR-ovi dodijeljeni tebi za pregled i testiranje. Sinkronizirano sa Supabaseom u stvarnom vremenu.
-                    </p>
-                </div>
-
-                <div class="flex items-center gap-2.5 w-full sm:w-auto">
-                    <!-- Primary Action Button -->
-                    <button id="hero-action-btn" onclick="handleHeroAction()" class="w-full sm:w-auto px-4 sm:px-5 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-white font-bold text-xs sm:text-sm shadow-lg shadow-cyan-600/30 transition flex items-center justify-center gap-2 cursor-pointer">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-                        <span id="hero-action-btn-text">Preuzmi nove PR-ove za sebe</span>
-                    </button>
-                </div>
-            </div>
 
             <!-- Status Quick Filter Pills for My PRs (Wrap on mobile) -->
             <div id="my-status-pills" class="flex flex-wrap items-center gap-1.5 sm:gap-2 text-xs">
@@ -357,7 +403,107 @@
                     </table>
                 </div>
             </div>
-        </section>
+                </section>
+
+            </div>
+
+            <!-- RIGHT SIDEBAR: PLAYSTATION 5 LIVE INTELLIGENCE CONSOLE -->
+            <aside class="lg:col-span-4 xl:col-span-3 space-y-4 lg:sticky lg:top-20">
+                
+                <!-- Panel 1: PS5 Metrics & Risk Distribution -->
+                <div class="p-4 rounded-2xl bg-cardbg/95 border border-blue-900/40 shadow-xl space-y-3.5 backdrop-blur relative overflow-hidden">
+                    <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-600 via-cyan-400 to-blue-600"></div>
+                    
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <span class="text-base text-cyan-400">🎮</span>
+                            <h3 class="text-xs font-bold text-white uppercase tracking-wider">AnyPS5 Radar</h3>
+                        </div>
+                        <span class="text-[10px] px-2 py-0.5 rounded-full bg-blue-950 text-cyan-300 border border-blue-800 font-mono">
+                            <span id="sidebar-total-prs">808</span> PR-ova
+                        </span>
+                    </div>
+
+                    <!-- Risk Distribution Progress Bar -->
+                    <div class="space-y-1.5">
+                        <div class="h-2 w-full rounded-full bg-slate-900 overflow-hidden flex border border-slate-800">
+                            <div id="sidebar-bar-low" class="bg-[#00f076] h-full transition-all duration-500" style="width: 50%" title="Quick Merge"></div>
+                            <div id="sidebar-bar-med" class="bg-[#f59e0b] h-full transition-all duration-500" style="width: 30%" title="Srednji rizik"></div>
+                            <div id="sidebar-bar-high" class="bg-[#ff3b5c] h-full transition-all duration-500" style="width: 20%" title="Hotspot rizik"></div>
+                        </div>
+                        <div class="grid grid-cols-3 text-[10px] pt-1 gap-1.5 text-center font-mono">
+                            <div class="p-1.5 rounded-lg bg-slate-900/70 border border-emerald-950">
+                                <div class="text-[#00f076] font-bold" id="sidebar-low-count">0</div>
+                                <div class="text-[9px] text-slate-400">▲ Quick</div>
+                            </div>
+                            <div class="p-1.5 rounded-lg bg-slate-900/70 border border-amber-950">
+                                <div class="text-amber-400 font-bold" id="sidebar-med-count">0</div>
+                                <div class="text-[9px] text-slate-400">◯ Srednji</div>
+                            </div>
+                            <div class="p-1.5 rounded-lg bg-slate-900/70 border border-rose-950">
+                                <div class="text-[#ff3b5c] font-bold" id="sidebar-high-count">0</div>
+                                <div class="text-[9px] text-slate-400">✕ Hotspot</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Panel 2: Live Maintainers Roster & Workload -->
+                <div class="p-4 rounded-2xl bg-cardbg/95 border border-slate-800 shadow-xl space-y-3 backdrop-blur">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <span class="text-sm">🛡️</span>
+                            <h3 class="text-xs font-bold text-slate-100 uppercase tracking-wider">Aktivni Maintaineri</h3>
+                        </div>
+                        <span class="text-[10px] text-slate-400 font-mono">Tim</span>
+                    </div>
+
+                    <div id="sidebar-maintainers-list" class="space-y-1.5">
+                        <!-- Injected dynamically by renderSidebarStats() in app.js -->
+                    </div>
+                </div>
+
+                <!-- Panel 3: Conflict Hotspots Radar -->
+                <div class="p-4 rounded-2xl bg-cardbg/95 border border-rose-950/50 shadow-xl space-y-3 backdrop-blur">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <span class="text-sm text-rose-400">🔥</span>
+                            <h3 class="text-xs font-bold text-slate-100 uppercase tracking-wider">Top Kolizije Datoteka</h3>
+                        </div>
+                        <span class="text-[10px] text-rose-400/80 font-mono">Kolizije</span>
+                    </div>
+
+                    <div id="sidebar-hotspots-list" class="space-y-1.5 text-xs">
+                        <!-- Injected dynamically by renderSidebarStats() in app.js -->
+                    </div>
+                </div>
+
+                <!-- Panel 4: PlayStation Quick Actions -->
+                <div class="p-4 rounded-2xl bg-gradient-to-b from-blue-950/40 via-cardbg to-slate-950/80 border border-blue-900/50 shadow-xl space-y-2.5">
+                    <div class="text-xs font-bold text-cyan-300 uppercase tracking-wider flex items-center justify-between">
+                        <span>⚡ Brze akcije</span>
+                        <span class="text-xs text-blue-400 font-mono">▲ ◯ ✕ ▢</span>
+                    </div>
+                    
+                    <button onclick="quickClaimSafeBatch(5)" class="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-blue-700 to-cyan-600 hover:from-blue-600 hover:to-cyan-500 text-white font-bold text-xs shadow-md shadow-blue-700/30 transition flex items-center justify-center gap-2 cursor-pointer">
+                        <span>🟢</span>
+                        <span>Preuzmi 5 Quick-Merge PR-ova</span>
+                    </button>
+
+                    <button onclick="switchMainView('batches')" class="w-full py-2 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 font-semibold text-xs transition flex items-center justify-center gap-2 cursor-pointer">
+                        <span>⚡</span>
+                        <span>Istraži Minibatch Studio</span>
+                    </button>
+
+                    <a href="https://github.com/boykopovar/AnyPS5" target="_blank" class="w-full py-2 px-3 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-800 text-slate-300 font-medium text-xs transition flex items-center justify-center gap-2">
+                        <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+                        <span>Otvori AnyPS5 na GitHubu</span>
+                    </a>
+                </div>
+
+            </aside>
+
+        </div>
 
     </main>
 

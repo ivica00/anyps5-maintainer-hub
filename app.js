@@ -66,6 +66,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupRepoFilters();
     renderMyPRs();
     renderRepoTable();
+    renderSidebarStats();
 
     // 1. Initial direct REST fetch from Supabase (PRs & Batches)
     refreshDataFromSupabase();
@@ -317,6 +318,7 @@ async function refreshDataFromSupabase(showToastAlert = false) {
         renderMyPRs();
         renderMinibatches();
         renderRepoTable();
+        renderSidebarStats();
 
         if (showToastAlert) {
             showToast(`Usklađeno sa Supabaseom (${state.minibatches.length} paketa)`);
@@ -1210,41 +1212,111 @@ function renderMyPRs() {
     if (myPRs.length === 0) {
         container.innerHTML = '';
         if (emptyState) {
-            emptyState.innerHTML = isM ? `
-                <div class="text-4xl sm:text-5xl">📭</div>
-                <div class="space-y-1">
-                    <h3 class="text-base sm:text-lg font-bold text-slate-200">Trenutno nemaš dodijeljenih PR-ova</h3>
-                    <p class="text-xs sm:text-sm text-slate-400 max-w-md mx-auto">
-                        Tvoj službeni red za pregled i merge je prazan. Preuzmi nove PR-ove iz baze ili odaberi paket iz Minibatch Studija.
-                    </p>
+            const unassignedLowPRs = state.allPRs
+                .filter(p => (p.assignedReviewer === 'none' || !p.assignedReviewer) && p.riskLevel === 'low')
+                .slice(0, 4);
+
+            const recCardsHtml = unassignedLowPRs.length > 0 ? `
+                <div class="space-y-2.5 pt-2 text-left">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs text-cyan-400 font-mono">▲ ◯ ✕ ▢</span>
+                            <span class="text-xs font-bold text-white uppercase tracking-wider">Preporučeni brzi PR-ovi (Quick-Merge)</span>
+                        </div>
+                        <span class="text-[10px] text-emerald-400 font-mono bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800">0 kolizija</span>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        ${unassignedLowPRs.map(pr => `
+                            <div class="p-3 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-blue-500/50 transition space-y-2 flex flex-col justify-between">
+                                <div class="space-y-1">
+                                    <div class="flex items-center justify-between gap-1">
+                                        <span class="font-mono text-cyan-400 font-bold text-xs">#${pr.number}</span>
+                                        ${getCategoryBadge(pr.category)}
+                                        <span class="text-[10px] text-slate-400 font-mono">+${pr.additions} / -${pr.deletions}</span>
+                                    </div>
+                                    <div class="text-xs font-semibold text-slate-200 line-clamp-1" title="${escapeHtml(pr.title)}">
+                                        ${escapeHtml(pr.title)}
+                                    </div>
+                                    <div class="text-[10px] text-slate-400">
+                                        Autor: <span class="text-slate-300 font-mono">@${escapeHtml(pr.author)}</span>
+                                    </div>
+                                </div>
+                                <div class="pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
+                                    <button onclick="openInspectModal(${pr.number})" class="text-[11px] text-slate-400 hover:text-cyan-300 transition cursor-pointer">
+                                        🧪 Detalji
+                                    </button>
+                                    ${isM ? `
+                                        <button onclick="assignPR(${pr.number}, '${state.currentMaintainer}')" class="px-2.5 py-1 rounded-lg bg-gradient-to-r from-blue-700 to-cyan-600 hover:from-blue-600 hover:to-cyan-500 text-white font-bold text-[11px] transition shadow-md shadow-blue-700/30 flex items-center gap-1 cursor-pointer">
+                                            <span>▲</span> Preuzmi
+                                        </button>
+                                    ` : `
+                                        <button onclick="toggleWatchlistSingle(${pr.number})" class="px-2.5 py-1 rounded-lg bg-purple-950 hover:bg-purple-900 text-purple-300 border border-purple-800 font-bold text-[11px] transition flex items-center gap-1 cursor-pointer">
+                                            <span>▲</span> Dodaj u pregled
+                                        </button>
+                                    `}
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
                 </div>
-                <div class="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-2">
-                    <button onclick="quickClaimSafeBatch(5)" class="w-full sm:w-auto px-4 py-2 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800 text-xs font-semibold rounded-xl transition cursor-pointer">
-                        🟢 Preuzmi 5 sigurnih Quick-Merge PR-ova
-                    </button>
-                    <button onclick="openClaimModal()" class="w-full sm:w-auto px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold rounded-xl transition shadow-md shadow-cyan-600/30 cursor-pointer">
-                        ➕ Odaberi iz repozitorija...
-                    </button>
+            ` : '';
+
+            emptyState.innerHTML = isM ? `
+                <div class="relative overflow-hidden p-6 sm:p-8 rounded-2xl bg-cardbg/95 border border-blue-900/40 shadow-2xl space-y-4">
+                    <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-600 via-cyan-400 to-blue-600"></div>
+                    <div class="flex flex-col items-center justify-center text-center space-y-2">
+                        <div class="w-12 h-12 rounded-2xl bg-blue-950/80 border border-blue-800/80 flex items-center justify-center text-2xl shadow-inner text-cyan-400">
+                            🎮
+                        </div>
+                        <h3 class="text-base sm:text-lg font-bold text-white tracking-wide">AnyPS5 Radna Konzola je spremna</h3>
+                        <p class="text-xs sm:text-sm text-slate-400 max-w-lg mx-auto">
+                            Tvoj službeni red za pregled i merge je trenutno prazan. Preuzmi jedan od preporučenih paketa ili pokreni automatski batch.
+                        </p>
+                    </div>
+
+                    ${recCardsHtml}
+
+                    <div class="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-3 border-t border-slate-800/80">
+                        <button onclick="quickClaimSafeBatch(5)" class="w-full sm:w-auto px-4 py-2.5 bg-gradient-to-r from-blue-700 to-cyan-600 hover:from-blue-600 hover:to-cyan-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-blue-700/30 transition flex items-center justify-center gap-2 cursor-pointer">
+                            <span>🟢</span> Preuzmi 5 Quick-Merge PR-ova
+                        </button>
+                        <button onclick="switchMainView('batches')" class="w-full sm:w-auto px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 text-xs font-semibold rounded-xl transition flex items-center justify-center gap-2 cursor-pointer">
+                            <span>⚡</span> Otvori Minibatch Studio
+                        </button>
+                        <button onclick="openClaimModal()" class="w-full sm:w-auto px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 text-xs font-medium rounded-xl transition flex items-center justify-center gap-2 cursor-pointer">
+                            <span>➕</span> Ručni odabir...
+                        </button>
+                    </div>
                 </div>
             ` : `
-                <div class="text-4xl sm:text-5xl">🔍</div>
-                <div class="space-y-1">
-                    <h3 class="text-base sm:text-lg font-bold text-slate-200">Tvoj radni pregled je prazan</h3>
-                    <p class="text-xs sm:text-sm text-slate-400 max-w-md mx-auto">
-                        Kao Community Reviewer, odaberi pakete iz Minibatch Studija ili istraži Cijeli repozitorij kako bi lokalno testirao i recenzirao PR-ove.
-                    </p>
-                </div>
-                <div class="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-2">
-                    <button onclick="addSafeQuickBatchToReviewer()" class="w-full sm:w-auto px-4 py-2 bg-purple-950 hover:bg-purple-900 text-purple-300 border border-purple-800 text-xs font-semibold rounded-xl transition cursor-pointer">
-                        🟢 Dodaj 5 jednostavnih PR-ova za testiranje
-                    </button>
-                    <button onclick="switchMainView('batches')" class="w-full sm:w-auto px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold rounded-xl transition shadow-md shadow-cyan-600/30 cursor-pointer">
-                        ⚡ Istraži Minibatch Studio
-                    </button>
+                <div class="relative overflow-hidden p-6 sm:p-8 rounded-2xl bg-cardbg/95 border border-purple-900/40 shadow-2xl space-y-4">
+                    <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-purple-600 via-pink-400 to-purple-600"></div>
+                    <div class="flex flex-col items-center justify-center text-center space-y-2">
+                        <div class="w-12 h-12 rounded-2xl bg-purple-950/80 border border-purple-800/80 flex items-center justify-center text-2xl shadow-inner text-purple-300">
+                            🔍
+                        </div>
+                        <h3 class="text-base sm:text-lg font-bold text-white tracking-wide">AnyPS5 Radni Workbench za Recenzente</h3>
+                        <p class="text-xs sm:text-sm text-slate-400 max-w-lg mx-auto">
+                            Tvoj pregled je prazan. Odaberi brze PR-ove ispod za lokalno testiranje, pregled diffa ili generiranje AI sažetaka.
+                        </p>
+                    </div>
+
+                    ${recCardsHtml}
+
+                    <div class="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-3 border-t border-slate-800/80">
+                        <button onclick="addSafeQuickBatchToReviewer()" class="w-full sm:w-auto px-4 py-2.5 bg-purple-950 hover:bg-purple-900 text-purple-300 border border-purple-800 text-xs font-semibold rounded-xl transition flex items-center justify-center gap-2 cursor-pointer">
+                            <span>🟢</span> Dodaj 5 jednostavnih PR-ova
+                        </button>
+                        <button onclick="switchMainView('batches')" class="w-full sm:w-auto px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 text-xs font-semibold rounded-xl transition flex items-center justify-center gap-2 cursor-pointer">
+                            <span>⚡</span> Istraži Minibatch Studio
+                        </button>
+                    </div>
                 </div>
             `;
             emptyState.classList.remove('hidden');
         }
+        renderSidebarStats();
         return;
     } else {
         if (emptyState) emptyState.classList.add('hidden');
@@ -1346,6 +1418,7 @@ function renderMyPRs() {
             </div>
         `;
     }).join('');
+    renderSidebarStats();
 }
 
 function updateMyStatusCounts(myPRs) {
@@ -1390,11 +1463,12 @@ async function quickUpdateMyStatus(prNumber, newStatus) {
 }
 
 async function assignPR(prNumber, maintainerId, renderNow = true) {
+    const targetMaintainer = maintainerId || state.currentMaintainer || 'boykopovar';
     const target = state.allPRs.find(p => p.number === prNumber);
     const newStatus = target && target.status === 'unassigned' ? 'in-review' : (target?.status || 'in-review');
     
     if (target) {
-        target.assignedReviewer = maintainerId;
+        target.assignedReviewer = targetMaintainer;
         target.status = newStatus;
     }
 
@@ -1402,10 +1476,11 @@ async function assignPR(prNumber, maintainerId, renderNow = true) {
         renderMyPRs();
         renderMinibatches();
         renderRepoTable();
+        renderSidebarStats();
     }
 
     await updatePRInSupabase(prNumber, { 
-        assigned_reviewer: maintainerId, 
+        assigned_reviewer: targetMaintainer, 
         status: newStatus 
     });
 }
@@ -1420,6 +1495,7 @@ async function unassignPR(prNumber) {
     renderMyPRs();
     renderMinibatches();
     renderRepoTable();
+    renderSidebarStats();
 
     await updatePRInSupabase(prNumber, { 
         assigned_reviewer: 'none', 
@@ -1546,10 +1622,6 @@ async function batchClaimPreset(type, count) {
         status: 'in-review'
     });
     showToast(`Preuzeto ${toClaim.length} PR-ova za @${state.currentMaintainer}!`);
-}
-
-function quickClaimSafeBatch(count) {
-    batchClaimPreset('safe', count);
 }
 
 
@@ -2260,6 +2332,10 @@ function addSafeQuickBatchToReviewer(count = 5) {
 }
 
 async function quickClaimSafeBatch(count = 5) {
+    if (!isCurrentUserMaintainer()) {
+        addSafeQuickBatchToReviewer(count);
+        return;
+    }
     const safePRs = state.allPRs.filter(p => p.assignedReviewer !== state.currentMaintainer && p.riskLevel === 'low').slice(0, count);
     if (safePRs.length === 0) {
         showToast('Nema slobodnih Quick-Merge PR-ova');
@@ -2270,6 +2346,7 @@ async function quickClaimSafeBatch(count = 5) {
     renderMyPRs();
     renderMinibatches();
     renderRepoTable();
+    renderSidebarStats();
 
     await updateBatchPRsInSupabase(nums, {
         assigned_reviewer: state.currentMaintainer,
@@ -2420,3 +2497,109 @@ function showToast(msg) {
         toast.classList.add('translate-y-10', 'opacity-0');
     }, 2400);
 }
+
+// ==========================================
+// PLAYSTATION 5 LIVE INTELLIGENCE SIDEBAR
+// ==========================================
+
+function renderSidebarStats() {
+    const totalEl = document.getElementById('sidebar-total-prs');
+    const lowCountEl = document.getElementById('sidebar-low-count');
+    const medCountEl = document.getElementById('sidebar-med-count');
+    const highCountEl = document.getElementById('sidebar-high-count');
+    const barLow = document.getElementById('sidebar-bar-low');
+    const barMed = document.getElementById('sidebar-bar-med');
+    const barHigh = document.getElementById('sidebar-bar-high');
+
+    const total = state.allPRs.length || 0;
+    if (totalEl) totalEl.innerText = total;
+
+    let lowCount = 0;
+    let medCount = 0;
+    let highCount = 0;
+
+    const fileMap = {};
+
+    state.allPRs.forEach(pr => {
+        if (pr.riskLevel === 'low') lowCount++;
+        else if (pr.riskLevel === 'high') highCount++;
+        else medCount++;
+
+        if (Array.isArray(pr.hotspots)) {
+            pr.hotspots.forEach(f => {
+                if (!f) return;
+                fileMap[f] = (fileMap[f] || 0) + 1;
+            });
+        }
+    });
+
+    if (lowCountEl) lowCountEl.innerText = lowCount;
+    if (medCountEl) medCountEl.innerText = medCount;
+    if (highCountEl) highCountEl.innerText = highCount;
+
+    if (total > 0) {
+        const lowPct = Math.round((lowCount / total) * 100);
+        const medPct = Math.round((medCount / total) * 100);
+        const highPct = Math.max(0, 100 - lowPct - medPct);
+        if (barLow) barLow.style.width = `${lowPct}%`;
+        if (barMed) barMed.style.width = `${medPct}%`;
+        if (barHigh) barHigh.style.width = `${highPct}%`;
+    }
+
+    // Maintainers Roster with live workload
+    const maintainersListEl = document.getElementById('sidebar-maintainers-list');
+    if (maintainersListEl) {
+        maintainersListEl.innerHTML = KNOWN_MAINTAINERS.map(m => {
+            const assignedCount = state.allPRs.filter(p => p.assignedReviewer === m).length;
+            const isMe = m === state.currentMaintainer;
+            return `
+                <div class="flex items-center justify-between p-2 rounded-xl ${isMe ? 'bg-blue-950/50 border border-blue-500/50 shadow-sm' : 'bg-slate-900/60 border border-slate-800/80'} text-xs transition">
+                    <div class="flex items-center gap-2">
+                        <img src="https://github.com/${m}.png" alt="${m}" class="w-5 h-5 rounded-full ring-1 ring-slate-700 flex-shrink-0" onerror="this.src='https://github.com/ghost.png'">
+                        <span class="font-mono text-xs ${isMe ? 'text-cyan-300 font-bold' : 'text-slate-300'}">@${m}</span>
+                        ${isMe ? '<span class="text-[9px] px-1.5 py-0.2 rounded-full bg-blue-900/80 text-cyan-200 border border-blue-700 font-semibold">Ti</span>' : ''}
+                    </div>
+                    <span class="text-[10px] font-mono px-2 py-0.5 rounded-full ${assignedCount > 0 ? 'bg-blue-900/60 text-cyan-200 border border-blue-700/60 font-bold' : 'bg-slate-950 text-slate-500 border border-slate-800'}">
+                        ${assignedCount} PR
+                    </span>
+                </div>
+            `;
+        }).join('');
+    }
+
+    // Top Conflict Hotspots Radar
+    const hotspotsListEl = document.getElementById('sidebar-hotspots-list');
+    if (hotspotsListEl) {
+        const sortedHotspots = Object.entries(fileMap)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 4);
+
+        if (sortedHotspots.length === 0) {
+            hotspotsListEl.innerHTML = `
+                <div class="text-[11px] text-slate-500 italic p-2 text-center">
+                    Nema detektiranih kolizija u repozitoriju
+                </div>
+            `;
+        } else {
+            hotspotsListEl.innerHTML = sortedHotspots.map(([file, count]) => {
+                const shortName = file.split('/').pop();
+                return `
+                    <div class="p-2 rounded-xl bg-slate-900/80 border border-rose-950/60 flex items-center justify-between gap-2 hover:border-rose-900 transition">
+                        <div class="truncate">
+                            <div class="font-mono text-rose-300 font-semibold truncate text-[11px]" title="${escapeHtml(file)}">
+                                ${escapeHtml(shortName)}
+                            </div>
+                            <div class="text-[9px] text-slate-500 truncate" title="${escapeHtml(file)}">
+                                ${escapeHtml(file)}
+                            </div>
+                        </div>
+                        <span class="px-2 py-0.5 rounded-full bg-rose-950/90 border border-rose-800 text-rose-300 text-[10px] font-mono font-bold whitespace-nowrap">
+                            ${count} PR
+                        </span>
+                    </div>
+                `;
+            }).join('');
+        }
+    }
+}
+
