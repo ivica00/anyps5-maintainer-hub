@@ -77,15 +77,21 @@
                 <!-- Maintainer Selector & Tab Switcher (Fully Responsive) -->
                 <div class="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full md:w-auto">
                     <!-- GitHub Profile & Role Pill Button -->
-                    <button onclick="openGitHubLoginModal()" id="github-auth-btn" title="Klikni za prijavu ili promjenu GitHub uloge"
+                    <button onclick="openGitHubLoginModal()" id="github-auth-btn" title="Klikni za GitHub prijavu ili profil"
                             class="flex-1 sm:flex-initial flex items-center justify-between sm:justify-start gap-2 bg-slate-900 hover:bg-slate-800 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs transition cursor-pointer shadow-sm">
-                        <div class="flex items-center gap-2 min-w-0">
+                        <!-- Logged In User View -->
+                        <div class="flex items-center gap-2 min-w-0" id="header-user-info">
                             <img id="header-user-avatar" src="https://github.com/boykopovar.png" class="w-5 h-5 rounded-full border border-slate-700 flex-shrink-0" alt="avatar">
                             <span id="header-username" class="font-bold text-slate-100 font-mono text-xs truncate">@boykopovar</span>
                         </div>
-                        <div class="flex items-center gap-1.5">
+                        <div class="flex items-center gap-1.5" id="header-user-badge-wrap">
                             <span id="header-role-badge" class="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800 whitespace-nowrap">🛡️ Maintainer</span>
                             <span class="text-slate-500 text-[9px]">▼</span>
+                        </div>
+                        <!-- Logged Out View -->
+                        <div id="header-login-prompt" class="hidden items-center gap-1.5 text-emerald-400 font-semibold">
+                            <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+                            <span>Prijavi se s GitHub-om</span>
                         </div>
                     </button>
 
@@ -653,136 +659,105 @@
         </div>
     </div>
 
-    <!-- ================= MODAL: GITHUB API 1-KLIK AUTORIZACIJA ================= -->
+    <!-- ================= MODAL: GITHUB OAUTH AUTORIZACIJA ================= -->
     <div id="github-login-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-3 sm:p-4">
-        <div class="bg-cardbg border border-slate-700 rounded-2xl max-w-lg w-full p-4 sm:p-6 shadow-2xl space-y-4 max-h-[92vh] overflow-y-auto">
+        <div class="bg-cardbg border border-slate-700 rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-2xl space-y-4">
+            <!-- Modal Header -->
             <div class="flex items-center justify-between border-b border-slate-800 pb-3">
                 <div class="flex items-center gap-2.5">
-                    <div class="w-9 h-9 rounded-xl bg-slate-900 border border-slate-700 flex items-center justify-center text-xl">
-                        🐙
+                    <div class="w-9 h-9 rounded-xl bg-slate-900 border border-slate-700 flex items-center justify-center text-xl text-white">
+                        <svg class="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
                     </div>
                     <div>
-                        <h3 class="text-sm sm:text-base font-bold text-slate-100 flex items-center gap-1.5">
-                            GitHub API Autorizacija
-                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 font-mono font-normal">1-Klik</span>
-                        </h3>
-                        <p class="text-[11px] text-slate-400">Izravna veza s GitHub REST API-jem za verifikaciju i recenzije</p>
+                        <h3 class="text-base font-bold text-slate-100">GitHub OAuth Prijava</h3>
+                        <p class="text-[11px] text-slate-400">Službena autorizacija preko github.com</p>
                     </div>
                 </div>
                 <button onclick="closeGitHubLoginModal()" class="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800 cursor-pointer">✕</button>
             </div>
 
-            <!-- SEKCIJA 1: 1-KLIK BRZA AUTORIZACIJA -->
-            <div class="p-3.5 rounded-xl bg-gradient-to-r from-cyan-950/40 via-darkpanel to-slate-900 border border-cyan-800/60 space-y-2.5">
-                <div class="flex items-center justify-between">
-                    <span class="text-xs font-bold text-cyan-200 flex items-center gap-1.5">
-                        <span>⚡</span> 1-Klik Brza Autorizacija
-                    </span>
-                    <span class="text-[10px] text-cyan-400/80 font-mono">Uživo preko GitHub API-ja</span>
-                </div>
-                <p class="text-[11px] text-slate-300">
-                    Klikom na svoj profil aplikacija se odmah spaja na GitHubov API, povlači tvoje stvarne podatke (sliku, ime, bio) i dodjeljuje odgovarajuću ulogu:
-                </p>
-
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                    <button onclick="oneClickLogin('ivica00')" class="p-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-cyan-500 text-left transition flex items-center gap-2.5 cursor-pointer shadow-sm group">
-                        <img src="https://github.com/ivica00.png" class="w-8 h-8 rounded-full border border-slate-600 group-hover:border-cyan-400 transition" alt="ivica00">
-                        <div class="min-w-0">
-                            <div class="font-bold text-cyan-300 text-xs truncate">@ivica00</div>
-                            <div class="text-[10px] text-emerald-400 font-mono">🛡️ Službeni Maintainer</div>
-                        </div>
-                    </button>
-
-                    <button onclick="oneClickLogin('boykopovar')" class="p-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-cyan-500 text-left transition flex items-center gap-2.5 cursor-pointer shadow-sm group">
-                        <img src="https://github.com/boykopovar.png" class="w-8 h-8 rounded-full border border-slate-600 group-hover:border-cyan-400 transition" alt="boykopovar">
-                        <div class="min-w-0">
-                            <div class="font-bold text-cyan-300 text-xs truncate">@boykopovar</div>
-                            <div class="text-[10px] text-emerald-400 font-mono">🛡️ Repo Lead & Owner</div>
-                        </div>
-                    </button>
-
-                    <button onclick="oneClickLogin('Honza11')" class="p-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-cyan-500 text-left transition flex items-center gap-2.5 cursor-pointer shadow-sm group">
-                        <img src="https://github.com/Honza11.png" class="w-8 h-8 rounded-full border border-slate-600 group-hover:border-cyan-400 transition" alt="Honza11">
-                        <div class="min-w-0">
-                            <div class="font-bold text-cyan-300 text-xs truncate">@Honza11</div>
-                            <div class="text-[10px] text-emerald-400 font-mono">🛡️ AGC & Vulkan</div>
-                        </div>
-                    </button>
-
-                    <button onclick="oneClickLogin('AnyPS5-Contributor', 'reviewer')" class="p-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-purple-900/60 hover:border-purple-500 text-left transition flex items-center gap-2.5 cursor-pointer shadow-sm group">
-                        <div class="w-8 h-8 rounded-full bg-purple-950 border border-purple-700 flex items-center justify-center text-sm text-purple-300">
-                            🔍
-                        </div>
-                        <div class="min-w-0">
-                            <div class="font-bold text-purple-300 text-xs truncate">Vanjski Suradnik</div>
-                            <div class="text-[10px] text-purple-400 font-mono">🔍 Community Reviewer</div>
-                        </div>
-                    </button>
-                </div>
-            </div>
-
-            <!-- SEKCIJA 2: PRIJAVA PROIZVOLJNIM GITHUB KORISNIČKIM IMENOM -->
-            <div class="space-y-2">
-                <label class="block text-xs font-semibold text-slate-300">Ili unesi bilo koje GitHub korisničko ime (@username):</label>
-                <div class="flex gap-2">
-                    <div class="relative flex-1">
-                        <span class="absolute inset-y-0 left-0 pl-2.5 flex items-center text-slate-500 font-mono text-xs">@</span>
-                        <input id="github-username-input" type="text" placeholder="npr. tvoje-github-ime"
-                               class="w-full pl-7 pr-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-100 font-mono focus:outline-none focus:border-cyan-500">
+            <!-- STANJE 1: KORISNIK NIJE PRIJAVLJEN (AUTHORIZE GITHUB) -->
+            <div id="oauth-logged-out-state" class="space-y-4">
+                <!-- Visual Connection Graphic (AnyPS5 Logo ➔ Connected ➔ GitHub Logo) -->
+                <div class="p-4 rounded-xl bg-slate-900/90 border border-slate-800 flex items-center justify-center gap-3">
+                    <div class="w-12 h-12 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center font-black text-white text-xl shadow-lg shadow-cyan-500/20">
+                        Ψ
                     </div>
-                    <button onclick="handleGitHubUsernameLogin()" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-white font-bold text-xs rounded-lg transition flex items-center gap-1 cursor-pointer">
-                        <span>Provjeri & Prijavi</span>
-                    </button>
-                </div>
-            </div>
-
-            <!-- SEKCIJA 3: PUN PUSH/API PRISTUP S TOKENOM -->
-            <div class="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-1.5">
-                        <span class="text-amber-400 text-xs">🔑</span>
-                        <label class="text-xs font-semibold text-slate-200">Puni GitHub API Token (za slanje recenzija):</label>
+                    <div class="flex items-center gap-1 text-slate-500">
+                        <span class="w-3 h-0.5 bg-slate-700"></span>
+                        <span class="w-5 h-5 rounded-full bg-emerald-950 border border-emerald-600 text-emerald-400 flex items-center justify-center text-[10px] font-bold">✓</span>
+                        <span class="w-3 h-0.5 bg-slate-700"></span>
                     </div>
-                    <span class="text-[10px] text-slate-400 font-mono">Opcija</span>
-                </div>
-                <div class="flex gap-2">
-                    <input id="github-token-input" type="password" placeholder="ghp_... ili fine-grained token"
-                           class="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-slate-200 font-mono focus:outline-none focus:border-cyan-500">
-                    <button onclick="verifyAndConnectGitHubToken()" class="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-lg transition cursor-pointer whitespace-nowrap">
-                        ⚡ Provjeri token
-                    </button>
-                </div>
-                <p class="text-[10px] text-slate-400">
-                    💡 <strong>Brzi savjet:</strong> Ako si prijavljen u terminalu, pokreni <code class="text-slate-300 font-mono bg-slate-900 px-1 py-0.5 rounded">gh auth token</code> i zalijepi ga ovdje za 5000 API poziva/sat i izravno objavljivanje komentara na PR-ovima!
-                </p>
-            </div>
-
-            <!-- TRENUTNO AKTIVAN PROFIL (LIVE STATUS) -->
-            <div id="github-user-preview" class="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-3">
-                <div class="flex items-center gap-2.5 min-w-0">
-                    <img id="preview-avatar" src="https://github.com/boykopovar.png" class="w-9 h-9 rounded-full border border-slate-700 flex-shrink-0" alt="avatar">
-                    <div class="min-w-0">
-                        <div class="flex items-center gap-1.5 flex-wrap">
-                            <span id="preview-login" class="font-bold text-slate-200 text-xs font-mono truncate">@boykopovar</span>
-                            <span id="preview-role-badge" class="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">🛡️ Maintainer</span>
-                            <span id="preview-api-verified-badge" class="hidden text-[9px] px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 font-mono">API Verificiran</span>
-                        </div>
-                        <div id="preview-desc" class="text-[10px] text-slate-400 truncate">Službeni AnyPS5 maintainer</div>
+                    <div class="w-12 h-12 rounded-xl bg-slate-950 border border-slate-700 flex items-center justify-center text-white">
+                        <svg class="w-6 h-6 fill-current" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
                     </div>
                 </div>
-                <button onclick="toggleRolePreview()" id="role-toggle-btn" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded text-[10px] font-medium transition whitespace-nowrap cursor-pointer">
-                    Prebaci ulogu
+
+                <div class="text-center space-y-1">
+                    <div class="text-sm font-semibold text-slate-100">Authorize AnyPS5 Maintainer Workspace</div>
+                    <p class="text-xs text-slate-400">
+                        Klikom na zeleni gumb bit ćeš preusmjeren na službeni GitHub OAuth ekran za autorizaciju.
+                    </p>
+                </div>
+
+                <!-- Green Official Authorize Button -->
+                <button id="btn-github-oauth-login" onclick="loginWithGitHubOAuth()" 
+                        class="w-full py-3 px-4 bg-[#2ea44f] hover:bg-[#2c974b] active:scale-[0.99] text-white font-bold rounded-xl shadow-lg shadow-emerald-950/40 transition flex items-center justify-center gap-2.5 text-sm cursor-pointer">
+                    <svg class="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+                    <span>Authorize with GitHub</span>
                 </button>
+
+                <!-- Supabase Provider Setup Info (Shown only if provider is not configured) -->
+                <div id="oauth-setup-notice" class="hidden p-3.5 rounded-xl bg-amber-950/40 border border-amber-800/80 text-xs space-y-2.5">
+                    <div class="flex items-center gap-2 font-bold text-amber-300">
+                        <span>⚙️</span>
+                        <span>Potrebno jednokratno uključivanje na Supabaseu:</span>
+                    </div>
+                    <p class="text-slate-300 text-[11px] leading-relaxed">
+                        Kako bi GitHub OAuth preusmjeravanje radilo, u Supabaseu je potrebno uključiti GitHub provider:
+                    </p>
+                    <ol class="list-decimal list-inside space-y-1.5 text-[11px] text-slate-300">
+                        <li>
+                            Otvori <a href="https://github.com/settings/applications/new" target="_blank" class="text-cyan-400 underline font-semibold">GitHub Register OAuth App</a>
+                        </li>
+                        <li>
+                            Zalijepi Authorization callback URL:
+                            <div class="mt-1 flex items-center gap-1.5 font-mono text-[10px] bg-slate-950 p-1.5 rounded border border-slate-800 text-slate-200 select-all">
+                                <span>https://nzaxslgwsygpgwqcllpi.supabase.co/auth/v1/callback</span>
+                                <button onclick="copyTextToClipboard('https://nzaxslgwsygpgwqcllpi.supabase.co/auth/v1/callback', 'Kopiran callback URL!')" class="ml-auto text-cyan-400 hover:text-cyan-300 px-1 cursor-pointer">Kopiraj</button>
+                            </div>
+                        </li>
+                        <li>
+                            Otvori <a href="https://supabase.com/dashboard/project/nzaxslgwsygpgwqcllpi/auth/providers" target="_blank" class="text-cyan-400 underline font-semibold">Supabase Auth Providers</a>, uključi <strong>GitHub</strong>, zalijepi <em>Client ID</em> & <em>Client Secret</em> i spremi.
+                        </li>
+                    </ol>
+                </div>
             </div>
 
-            <!-- Footer -->
-            <div class="border-t border-slate-800 pt-3 flex items-center justify-between">
-                <button onclick="handleLogout()" class="text-[11px] text-rose-400 hover:underline cursor-pointer">
-                    Odjavi se / Obriši sesiju
-                </button>
-                <button onclick="closeGitHubLoginModal()" class="px-5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs rounded-lg transition cursor-pointer shadow-md shadow-cyan-600/30">
-                    Nastavi s radom
-                </button>
+            <!-- STANJE 2: KORISNIK JE VEĆ PRIJAVLJEN -->
+            <div id="oauth-logged-in-state" class="hidden space-y-3.5">
+                <div class="p-3.5 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-3">
+                    <div class="flex items-center gap-3 min-w-0">
+                        <img id="oauth-user-avatar" src="" class="w-11 h-11 rounded-full border border-slate-700 flex-shrink-0" alt="avatar">
+                        <div class="min-w-0">
+                            <div class="flex items-center gap-1.5 flex-wrap">
+                                <span id="oauth-username" class="font-bold text-slate-100 text-sm font-mono truncate">@username</span>
+                                <span id="oauth-role-badge" class="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800 whitespace-nowrap">🛡️ Maintainer</span>
+                            </div>
+                            <div id="oauth-fullname" class="text-xs text-slate-400 truncate">Ime Prezime</div>
+                            <div class="text-[10px] text-emerald-400 font-mono mt-0.5">● GitHub OAuth Sesija Aktivna</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between pt-2 border-t border-slate-800">
+                    <button onclick="signOutGitHub()" class="px-3.5 py-1.5 rounded-lg bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 text-xs font-semibold transition cursor-pointer">
+                        Odjavi se (Sign out)
+                    </button>
+                    <button onclick="closeGitHubLoginModal()" class="px-4 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold transition cursor-pointer">
+                        Nastavi s radom
+                    </button>
+                </div>
             </div>
         </div>
     </div>

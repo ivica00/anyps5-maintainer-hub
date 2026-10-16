@@ -61,6 +61,7 @@ const supabaseHeaders = {
 document.addEventListener('DOMContentLoaded', () => {
     loadPersistentUser();
     loadLocalFallbackData();
+    initSupabaseAuth();
     updateUserUI();
     setupRepoFilters();
     renderMyPRs();
@@ -84,33 +85,32 @@ function loadPersistentUser() {
         const savedAuth = localStorage.getItem('anyps5_auth_user');
         if (savedAuth) {
             state.currentUser = JSON.parse(savedAuth);
+            state.currentMaintainer = state.currentUser?.username || '';
         } else {
-            const savedLegacy = localStorage.getItem('anyps5_current_maintainer');
-            const user = savedLegacy || 'boykopovar';
-            const isM = KNOWN_MAINTAINERS.map(m => m.toLowerCase()).includes(user.toLowerCase());
-            state.currentUser = {
-                username: user,
-                name: user,
-                avatar: `https://github.com/${user}.png`,
-                role: isM ? 'maintainer' : 'reviewer',
-                token: ''
-            };
+            state.currentUser = null;
+            state.currentMaintainer = '';
         }
         const savedWatchlist = localStorage.getItem('anyps5_reviewer_watchlist');
         if (savedWatchlist) {
             state.reviewerWatchlist = new Set(JSON.parse(savedWatchlist));
         }
-        state.currentMaintainer = state.currentUser.username;
     } catch (e) {
         console.warn('LocalStorage error', e);
+        state.currentUser = null;
+        state.currentMaintainer = '';
     }
 }
 
 function savePersistentUser() {
     try {
-        localStorage.setItem('anyps5_auth_user', JSON.stringify(state.currentUser));
+        if (state.currentUser) {
+            localStorage.setItem('anyps5_auth_user', JSON.stringify(state.currentUser));
+            localStorage.setItem('anyps5_current_maintainer', state.currentUser.username);
+        } else {
+            localStorage.removeItem('anyps5_auth_user');
+            localStorage.removeItem('anyps5_current_maintainer');
+        }
         localStorage.setItem('anyps5_reviewer_watchlist', JSON.stringify(Array.from(state.reviewerWatchlist)));
-        localStorage.setItem('anyps5_current_maintainer', state.currentUser.username);
     } catch (e) {
         console.warn('LocalStorage error', e);
     }
@@ -119,20 +119,66 @@ function savePersistentUser() {
 function updateUserUI() {
     const u = state.currentUser;
     const isM = isCurrentUserMaintainer();
+    const isLoggedIn = !!u;
 
     // Header elements
     const avatarEl = document.getElementById('header-user-avatar');
     const userEl = document.getElementById('header-username');
     const roleBadgeEl = document.getElementById('header-role-badge');
-    if (avatarEl) avatarEl.src = u.avatar || `https://github.com/${u.username}.png`;
-    if (userEl) userEl.innerText = `@${u.username}`;
-    if (roleBadgeEl) {
-        if (isM) {
-            roleBadgeEl.className = 'px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800 whitespace-nowrap';
-            roleBadgeEl.innerText = '🛡️ Maintainer';
+    const headerInfo = document.getElementById('header-user-info');
+    const headerBadgeWrap = document.getElementById('header-user-badge-wrap');
+    const headerLoginPrompt = document.getElementById('header-login-prompt');
+
+    if (isLoggedIn) {
+        if (headerInfo) headerInfo.classList.remove('hidden');
+        if (headerBadgeWrap) headerBadgeWrap.classList.remove('hidden');
+        if (headerLoginPrompt) headerLoginPrompt.classList.add('hidden');
+
+        if (avatarEl) avatarEl.src = u.avatar || `https://github.com/${u.username}.png`;
+        if (userEl) userEl.innerText = `@${u.username}`;
+        if (roleBadgeEl) {
+            if (isM) {
+                roleBadgeEl.className = 'px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800 whitespace-nowrap';
+                roleBadgeEl.innerText = '🛡️ Maintainer';
+            } else {
+                roleBadgeEl.className = 'px-1.5 py-0.2 rounded text-[10px] font-bold bg-purple-950 text-purple-300 border border-purple-800 whitespace-nowrap';
+                roleBadgeEl.innerText = '🔍 Community Reviewer';
+            }
+        }
+    } else {
+        if (headerInfo) headerInfo.classList.add('hidden');
+        if (headerBadgeWrap) headerBadgeWrap.classList.add('hidden');
+        if (headerLoginPrompt) headerLoginPrompt.classList.remove('hidden');
+    }
+
+    // Modal state (logged out vs logged in)
+    const loggedOutState = document.getElementById('oauth-logged-out-state');
+    const loggedInState = document.getElementById('oauth-logged-in-state');
+    if (loggedOutState && loggedInState) {
+        if (isLoggedIn) {
+            loggedOutState.classList.add('hidden');
+            loggedInState.classList.remove('hidden');
+
+            const oauthAvatar = document.getElementById('oauth-user-avatar');
+            const oauthUser = document.getElementById('oauth-username');
+            const oauthFull = document.getElementById('oauth-fullname');
+            const oauthRole = document.getElementById('oauth-role-badge');
+
+            if (oauthAvatar) oauthAvatar.src = u.avatar || `https://github.com/${u.username}.png`;
+            if (oauthUser) oauthUser.innerText = `@${u.username}`;
+            if (oauthFull) oauthFull.innerText = u.name || u.username;
+            if (oauthRole) {
+                if (isM) {
+                    oauthRole.className = 'px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800';
+                    oauthRole.innerText = '🛡️ Maintainer';
+                } else {
+                    oauthRole.className = 'px-1.5 py-0.2 rounded text-[10px] font-bold bg-purple-950 text-purple-300 border border-purple-800';
+                    oauthRole.innerText = '🔍 Community Reviewer';
+                }
+            }
         } else {
-            roleBadgeEl.className = 'px-1.5 py-0.2 rounded text-[10px] font-bold bg-purple-950 text-purple-300 border border-purple-800 whitespace-nowrap';
-            roleBadgeEl.innerText = '🔍 Community Reviewer';
+            loggedOutState.classList.remove('hidden');
+            loggedInState.classList.add('hidden');
         }
     }
 
@@ -148,62 +194,28 @@ function updateUserUI() {
     const heroDesc = document.getElementById('hero-maintainer-desc');
     const heroBtnText = document.getElementById('hero-action-btn-text');
 
-    if (heroName) heroName.innerText = `@${u.username}`;
+    if (heroName) heroName.innerText = isLoggedIn ? `@${u.username}` : 'AnyPS5 Gost';
     if (heroRole) {
         if (isM) {
             heroRole.className = 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800';
             heroRole.innerText = '🛡️ Službeni Maintainer';
-        } else {
+        } else if (isLoggedIn) {
             heroRole.className = 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-950 text-purple-300 border border-purple-800';
             heroRole.innerText = '🔍 Community Reviewer';
+        } else {
+            heroRole.className = 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700';
+            heroRole.innerText = '👋 Gost (Potrebna GitHub Prijava)';
         }
     }
     if (heroDesc) {
         heroDesc.innerText = isM 
             ? 'Ovdje se nalaze PR-ovi dodijeljeni tebi za pregled i merge. Sinkronizirano sa Supabaseom u stvarnom vremenu.'
-            : 'Kao vanjski suradnik, imaš puni pristup svim AnyPS5 alatima za analizu koda, provjeru konflikata, lokalno testiranje i sastavljanje recenzija.';
+            : (isLoggedIn 
+                ? 'Kao vanjski suradnik, imaš puni pristup svim AnyPS5 alatima za analizu koda, provjeru konflikata, lokalno testiranje i sastavljanje recenzija.'
+                : 'Prijavi se službenim GitHub računom kako bi pristupio dodijeljenim PR-ovima, rješavanju sukoba i objavi recenzija.');
     }
     if (heroBtnText) {
-        heroBtnText.innerText = isM ? 'Preuzmi nove PR-ove za sebe' : 'Istraži PR-ove za testiranje';
-    }
-
-    // Modal preview
-    const prevAvatar = document.getElementById('preview-avatar');
-    const prevLogin = document.getElementById('preview-login');
-    const prevRole = document.getElementById('preview-role-badge');
-    const prevDesc = document.getElementById('preview-desc');
-    const prevApiVerified = document.getElementById('preview-api-verified-badge');
-    const roleToggleBtn = document.getElementById('role-toggle-btn');
-    const tokenInput = document.getElementById('github-token-input');
-
-    if (prevAvatar) prevAvatar.src = u.avatar || `https://github.com/${u.username}.png`;
-    if (prevLogin) prevLogin.innerText = `@${u.username}`;
-    if (prevRole) {
-        if (isM) {
-            prevRole.className = 'px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800';
-            prevRole.innerText = '🛡️ Maintainer';
-        } else {
-            prevRole.className = 'px-1.5 py-0.2 rounded text-[10px] font-bold bg-purple-950 text-purple-300 border border-purple-800';
-            prevRole.innerText = '🔍 Community Reviewer';
-        }
-    }
-    if (prevApiVerified) {
-        if (u.token) {
-            prevApiVerified.className = 'text-[9px] px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 font-mono inline-block';
-            prevApiVerified.innerText = '🔑 GitHub API Povezan';
-            prevApiVerified.classList.remove('hidden');
-        } else {
-            prevApiVerified.classList.add('hidden');
-        }
-    }
-    if (tokenInput && u.token && !tokenInput.value) {
-        tokenInput.value = u.token;
-    }
-    if (prevDesc) {
-        prevDesc.innerText = isM ? 'Službeni AnyPS5 maintainer' : 'Vanjski recenzent zajednice';
-    }
-    if (roleToggleBtn) {
-        roleToggleBtn.innerText = isM ? 'Isprobaj Reviewer pogled' : 'Isprobaj Maintainer pogled';
+        heroBtnText.innerText = isM ? 'Preuzmi nove PR-ove za sebe' : (isLoggedIn ? 'Istraži PR-ove za testiranje' : 'Prijavi se s GitHub-om');
     }
 }
 
@@ -2002,11 +2014,155 @@ const GitHubClient = {
     }
 };
 
+// Global Supabase client instance
+let sbClientInstance = null;
+function getSupabaseClient() {
+    if (!sbClientInstance && window.supabase && typeof window.supabase.createClient === 'function') {
+        sbClientInstance = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    }
+    return sbClientInstance;
+}
+
+// ==========================================
+// OFFICIAL GITHUB OAUTH 2.0 FLOW
+// ==========================================
+
+async function initSupabaseAuth() {
+    const sb = getSupabaseClient();
+    if (!sb) return;
+
+    try {
+        const { data: { session } } = await sb.auth.getSession();
+        if (session && session.user) {
+            handleOAuthUserSession(session);
+        }
+    } catch (e) {
+        console.warn('Supabase getSession error:', e);
+    }
+
+    sb.auth.onAuthStateChange((event, session) => {
+        if (event === 'SIGNED_IN' && session && session.user) {
+            handleOAuthUserSession(session);
+        } else if (event === 'SIGNED_OUT') {
+            state.currentUser = null;
+            state.currentMaintainer = '';
+            savePersistentUser();
+            updateUserUI();
+            renderMyPRs();
+            renderMinibatches();
+            renderRepoTable();
+        }
+    });
+}
+
+function handleOAuthUserSession(session) {
+    if (!session || !session.user) return;
+    const user = session.user;
+    const meta = user.user_metadata || {};
+    const username = meta.user_name || meta.preferred_username || user.email?.split('@')[0] || 'github_user';
+    const avatar = meta.avatar_url || `https://github.com/${username}.png`;
+    const name = meta.full_name || meta.name || username;
+    const providerToken = session.provider_token || state.currentUser?.token || '';
+
+    const isMaintainer = KNOWN_MAINTAINERS.map(m => m.toLowerCase()).includes(username.toLowerCase());
+
+    state.currentUser = {
+        username: username,
+        name: name,
+        avatar: avatar,
+        role: isMaintainer ? 'maintainer' : 'reviewer',
+        token: providerToken
+    };
+    state.currentMaintainer = username;
+
+    savePersistentUser();
+    updateUserUI();
+    renderMyPRs();
+    renderMinibatches();
+    renderRepoTable();
+
+    // Clean up URL hash tokens after redirect
+    if (window.location.hash && (window.location.hash.includes('access_token') || window.location.hash.includes('error'))) {
+        try {
+            history.replaceState(null, '', window.location.pathname + window.location.search);
+        } catch (e) {}
+    }
+
+    showToast(`Prijavljen putem GitHuba: @${username} (${isMaintainer ? 'Maintainer' : 'Reviewer'})`);
+}
+
+// Pokretanje pravog GitHub OAuth preusmjeravanja (Authorize application)
+async function loginWithGitHubOAuth() {
+    const sb = getSupabaseClient();
+    if (!sb) {
+        showToast('Supabase autentikacija nije spremna');
+        return;
+    }
+
+    const btn = document.getElementById('btn-github-oauth-login');
+    const originalText = btn ? btn.innerHTML : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `<span class="animate-spin inline-block">⏳</span> Preusmjeravanje na GitHub...`;
+    }
+
+    try {
+        const redirectUrl = window.location.origin + window.location.pathname;
+        const { data, error } = await sb.auth.signInWithOAuth({
+            provider: 'github',
+            options: {
+                redirectTo: redirectUrl,
+                scopes: 'read:user repo'
+            }
+        });
+
+        if (error) {
+            console.error('Supabase signInWithOAuth error:', error);
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
+            if (error.message && (error.message.includes('not enabled') || error.message.includes('Unsupported provider'))) {
+                const notice = document.getElementById('oauth-setup-notice');
+                if (notice) notice.classList.remove('hidden');
+                showToast('GitHub OAuth provider treba uključiti u Supabaseu');
+            } else {
+                showToast(`Greška: ${error.message}`);
+            }
+        }
+    } catch (err) {
+        console.error('OAuth redirect failed:', err);
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        }
+        showToast(`Greška: ${err.message}`);
+    }
+}
+
+async function signOutGitHub() {
+    const sb = getSupabaseClient();
+    if (sb) {
+        try {
+            await sb.auth.signOut();
+        } catch (e) {
+            console.warn('SignOut error:', e);
+        }
+    }
+    state.currentUser = null;
+    state.currentMaintainer = '';
+    savePersistentUser();
+    updateUserUI();
+    renderMyPRs();
+    renderMinibatches();
+    renderRepoTable();
+    closeGitHubLoginModal();
+    showToast('Odjavljen s GitHuba');
+}
+
 function openGitHubLoginModal() {
     const modal = document.getElementById('github-login-modal');
     if (!modal) return;
-    const input = document.getElementById('github-username-input');
-    if (input) input.value = state.currentUser.username;
     updateUserUI();
     modal.classList.remove('hidden');
     modal.classList.add('flex');
@@ -2020,68 +2176,15 @@ function closeGitHubLoginModal() {
     }
 }
 
-// ⚡ 1-Klik Brza Autorizacija putem GitHub API-ja
-async function oneClickLogin(username, forcedRole = null) {
-    showToast(`⚡ Spajanje s GitHub API-jem za @${username}...`);
-    await loginWithGitHub(username, state.currentUser.token || '', forcedRole);
-    closeGitHubLoginModal();
-}
-
-// 🔑 Provjera i povezivanje GitHub API tokena
-async function verifyAndConnectGitHubToken() {
-    const tokenInput = document.getElementById('github-token-input');
-    const token = tokenInput?.value?.trim() || '';
-    if (!token) {
-        showToast('Molimo unesi GitHub token');
-        return;
-    }
-
-    showToast('🔑 Provjera GitHub API tokena...');
-    try {
-        const user = await GitHubClient.fetchAuthenticatedUser(token);
-        if (!user || !user.login) {
-            showToast('❌ Nevažeći GitHub token ili je istekao!');
-            return;
-        }
-
-        const perms = await GitHubClient.checkRepoPermissions(token);
-        const hasRepoWrite = perms && (perms.push || perms.maintain || perms.admin);
-        const isMaintainer = hasRepoWrite || KNOWN_MAINTAINERS.map(m => m.toLowerCase()).includes(user.login.toLowerCase());
-
-        state.currentUser = {
-            username: user.login,
-            name: user.name || user.login,
-            avatar: user.avatar_url || `https://github.com/${user.login}.png`,
-            role: isMaintainer ? 'maintainer' : 'reviewer',
-            token: token
-        };
-        state.currentMaintainer = user.login;
-
-        savePersistentUser();
-        updateUserUI();
-        renderMyPRs();
-        renderMinibatches();
-        renderRepoTable();
-
-        showToast(`🎉 Povezan GitHub račun: @${user.login} (${isMaintainer ? 'Maintainer' : 'Reviewer'})`);
-    } catch (e) {
-        console.error('verifyAndConnectGitHubToken error:', e);
-        showToast(`❌ Greška pri provjeri tokena: ${e.message}`);
-    }
-}
-
 // 🚀 1-Klik Objava recenzije izravno na GitHub PR preko API-ja
 async function postReviewToGitHubViaAPI() {
     if (!state.activeInspectPR) return;
     const pr = state.activeInspectPR;
 
-    if (!state.currentUser.token) {
-        const proceed = confirm(`Za izravnu objavu recenzije na GitHub AnyPS5 repozitoriju potreban je GitHub API Token (npr. iz 'gh auth token' ili Personal Access Token sa repo pristupom).\n\nŽeliš li sada unijeti GitHub token?`);
+    if (!state.currentUser || !state.currentUser.token) {
+        const proceed = confirm(`Za izravnu objavu recenzije na GitHub AnyPS5 repozitoriju potrebna je aktivna GitHub OAuth prijava s pristupom repozitoriju.\n\nŽeliš li se sada autorizirati putem GitHuba?`);
         if (proceed) {
             openGitHubLoginModal();
-            setTimeout(() => {
-                document.getElementById('github-token-input')?.focus();
-            }, 250);
         }
         return;
     }
@@ -2109,7 +2212,7 @@ async function postReviewToGitHubViaAPI() {
         md += `#### 📝 Zabilješke s testiranja:\n${notes.trim()}\n\n`;
     }
 
-    md += `*Objavljeno izravno putem [AnyPS5 Maintainer Workspace](https://ivica00.github.io/anyps5-maintainer-hub/) s 1-Klik GitHub API integracijom.*`;
+    md += `*Objavljeno izravno putem [AnyPS5 Maintainer Workspace](https://ivica00.github.io/anyps5-maintainer-hub/) s GitHub OAuth integracijom.*`;
 
     const btn = document.getElementById('btn-api-submit');
     const originalText = btn ? btn.innerHTML : '';
@@ -2132,84 +2235,11 @@ async function postReviewToGitHubViaAPI() {
     }
 }
 
-async function handleGitHubUsernameLogin() {
-    const input = document.getElementById('github-username-input');
-    const tokenInput = document.getElementById('github-token-input');
-    const username = input?.value || '';
-    const token = tokenInput?.value || '';
-    await loginWithGitHub(username, token);
-    closeGitHubLoginModal();
-}
-
-function quickSelectUser(username) {
-    if (username === 'community_user') {
-        oneClickLogin('AnyPS5-Contributor', 'reviewer');
-    } else {
-        oneClickLogin(username);
-    }
-}
-
-function toggleRolePreview() {
-    state.currentUser.role = state.currentUser.role === 'maintainer' ? 'reviewer' : 'maintainer';
-    savePersistentUser();
-    updateUserUI();
-    renderMyPRs();
-    renderMinibatches();
-    renderRepoTable();
-    showToast(`Prebačeno na: ${state.currentUser.role === 'maintainer' ? '🛡️ Službeni Maintainer način' : '🔍 Community Reviewer način'}`);
-}
-
-function handleLogout() {
-    loginWithGitHub('AnyPS5-Guest', '', 'reviewer');
-    closeGitHubLoginModal();
-    showToast('Odjavljen');
-}
-
-async function loginWithGitHub(username, token = '', forcedRole = null) {
-    const cleanUser = username.trim().replace(/^@/, '');
-    if (!cleanUser) {
-        showToast('Unesi valjano GitHub korisničko ime');
+function handleHeroAction() {
+    if (!state.currentUser) {
+        openGitHubLoginModal();
         return;
     }
-
-    let name = cleanUser;
-    let avatar = `https://github.com/${cleanUser}.png`;
-    let isMaintainer = forcedRole ? (forcedRole === 'maintainer') : KNOWN_MAINTAINERS.map(m => m.toLowerCase()).includes(cleanUser.toLowerCase());
-
-    const profile = await GitHubClient.fetchPublicProfile(cleanUser);
-    if (profile) {
-        if (profile.avatar_url) avatar = profile.avatar_url;
-        if (profile.name) name = profile.name;
-    }
-
-    if (token) {
-        const perms = await GitHubClient.checkRepoPermissions(token);
-        if (perms && (perms.push || perms.maintain || perms.admin)) {
-            isMaintainer = true;
-        }
-    }
-
-    state.currentUser = {
-        username: cleanUser,
-        name: name,
-        avatar: avatar,
-        role: isMaintainer ? 'maintainer' : 'reviewer',
-        token: token
-    };
-    state.currentMaintainer = cleanUser;
-
-    savePersistentUser();
-    updateUserUI();
-    renderMyPRs();
-    renderMinibatches();
-    renderRepoTable();
-
-    showToast(isMaintainer 
-        ? `Prijavljen kao Maintainer: @${cleanUser} (Puni pristup)` 
-        : `Prijavljen kao Community Reviewer: @${cleanUser} (Alati za recenziju)`);
-}
-
-function handleHeroAction() {
     if (isCurrentUserMaintainer()) {
         openClaimModal();
     } else {
