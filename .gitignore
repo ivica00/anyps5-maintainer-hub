@@ -1,8 +1,6 @@
 # Environment and secret keys
 .env
 *.txt
-setup_batches_table.py
-generate_batches_backend.py
 test_batches.py
 
 # Python cache
@@ -13,3 +11,10 @@ __pycache__/
 Thumbs.db
 .DS_Store
 
+
+# Private database backups
+.local-backups/
+
+# Build dependencies and cache
+node_modules/
+.build-cache/

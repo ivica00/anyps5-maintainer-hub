@@ -28,10 +28,27 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Build pinned browser assets and test
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+          npm test
+
+      - name: Prepare public files
+        run: |
+          mkdir -p public
+          cp index.html app.js prs_data.js public/
+          cp -r assets public/
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: '.'
+          path: public
 
       - name: Deploy to GitHub Pages
         id: deployment

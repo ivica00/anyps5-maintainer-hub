@@ -29,16 +29,10 @@ const state = {
     expandedBatches: new Set(),
     activeBatchForModal: null,
     activeBatchModalTab: 'ai-prompt', // 'ai-prompt', 'merge', or 'test'
-    currentUser: {
-        username: 'boykopovar',
-        name: 'Boyko Povar',
-        avatar: 'https://github.com/boykopovar.png',
-        role: 'maintainer', // 'maintainer' or 'reviewer'
-        token: ''
-    },
+    currentUser: null,
     reviewerWatchlist: new Set(),
     activeReviewerRecommendation: 'approve',
-    currentMaintainer: 'boykopovar',
+    currentMaintainer: '',
     activeView: 'mine', // 'mine', 'batches', or 'repo'
     myStatusFilter: 'all', // 'all', 'pending', 'approved', 'changes', 'ready'
     selectedClaimPRs: new Set(),
@@ -58,6 +52,20 @@ const supabaseHeaders = {
     'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
     'Content-Type': 'application/json'
 };
+
+async function supabaseRequest(path, options = {}) {
+    const mutation = options.method && options.method !== 'GET';
+    const client = getSupabaseClient();
+    const session = client ? (await client.auth.getSession()).data.session : null;
+    if (mutation && !session) throw new Error('Sign in with GitHub before saving changes.');
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+        ...options,
+        headers: { ...supabaseHeaders, ...options.headers,
+            Authorization: `Bearer ${session?.access_token || SUPABASE_ANON_KEY}` }
+    });
+    if (!response.ok) throw new Error(`Database request failed (${response.status}). Changes were not saved.`);
+    return response;
+}
 
 // Initialization on DOMContentLoaded
 document.addEventListener('DOMContentLoaded', () => {
@@ -89,14 +97,10 @@ document.addEventListener('DOMContentLoaded', () => {
 // Load persistent maintainer identity
 function loadPersistentUser() {
     try {
-        const savedAuth = localStorage.getItem('anyps5_auth_user');
-        if (savedAuth) {
-            state.currentUser = JSON.parse(savedAuth);
-            state.currentMaintainer = state.currentUser?.username || '';
-        } else {
-            state.currentUser = null;
-            state.currentMaintainer = '';
-        }
+        localStorage.removeItem('anyps5_auth_user');
+        localStorage.removeItem('anyps5_current_maintainer');
+        state.currentUser = null;
+        state.currentMaintainer = '';
         const savedWatchlist = localStorage.getItem('anyps5_reviewer_watchlist');
         if (savedWatchlist) {
             state.reviewerWatchlist = new Set(JSON.parse(savedWatchlist));
@@ -110,13 +114,6 @@ function loadPersistentUser() {
 
 function savePersistentUser() {
     try {
-        if (state.currentUser) {
-            localStorage.setItem('anyps5_auth_user', JSON.stringify(state.currentUser));
-            localStorage.setItem('anyps5_current_maintainer', state.currentUser.username);
-        } else {
-            localStorage.removeItem('anyps5_auth_user');
-            localStorage.removeItem('anyps5_current_maintainer');
-        }
         localStorage.setItem('anyps5_reviewer_watchlist', JSON.stringify(Array.from(state.reviewerWatchlist)));
     } catch (e) {
         console.warn('LocalStorage error', e);
@@ -243,29 +240,41 @@ function loadLocalFallbackData() {
 // SUPABASE REST COMMUNICATION (PRs & BATCHES)
 // ==========================================
 
+async function readAllSupabaseRows(query) {
+    const rows = [];
+    while (true) {
+        const response = await supabaseRequest(`${query}&limit=500&offset=${rows.length}`);
+        const page = await response.json();
+        if (!Array.isArray(page)) throw new Error('Invalid database response');
+        if (page.length === 0) return rows;
+        rows.push(...page);
+    }
+}
+
+let refreshInFlight = null;
 async function refreshDataFromSupabase(showToastAlert = false) {
+    if (refreshInFlight) return refreshInFlight;
+    refreshInFlight = refreshDataSnapshot(showToastAlert);
+    try { return await refreshInFlight; }
+    finally { refreshInFlight = null; }
+}
+
+async function refreshDataSnapshot(showToastAlert = false) {
     const statusText = document.getElementById('supabase-status-text');
     const pill = document.getElementById('supabase-status-pill');
 
     try {
         if (statusText) statusText.innerText = 'Refreshing...';
 
-        // 1. Fetch all PRs
-        const prsRes = await fetch(`${SUPABASE_URL}/rest/v1/prs?select=*&order=number.desc`, {
-            headers: supabaseHeaders
-        });
-
-        // 2. Fetch all Server-Side Minibatches
-        const batchesRes = await fetch(`${SUPABASE_URL}/rest/v1/batches?select=*&order=id.asc`, {
-            headers: supabaseHeaders
-        });
-
-        if (!prsRes.ok) throw new Error(`PRs fetch failed: ${prsRes.status}`);
-
-        const prData = await prsRes.json();
-        if (Array.isArray(prData) && prData.length > 0) {
+        // Fetch both complete datasets before replacing any visible state.
+        const [prData, batchData] = await Promise.all([
+            readAllSupabaseRows('prs?select=*&order=number.desc'),
+            readAllSupabaseRows('batches?select=*&order=id.asc')
+        ]);
+        if (Array.isArray(prData)) {
             state.allPRs = prData.map(row => ({
                 number: row.number,
+                githubState: row.github_state || 'unknown',
                 title: row.title,
                 author: row.author,
                 authorAvatar: row.author_avatar || `https://github.com/${row.author}.png`,
@@ -289,8 +298,7 @@ async function refreshDataFromSupabase(showToastAlert = false) {
         }
 
         // Parse Server-Side Batches
-        if (batchesRes.ok) {
-            const batchData = await batchesRes.json();
+        {
             if (Array.isArray(batchData)) {
                 state.minibatches = batchData.map(b => {
                     const prList = (b.pr_numbers || []).map(num => state.allPRs.find(p => p.number === num)).filter(Boolean);
@@ -330,6 +338,7 @@ async function refreshDataFromSupabase(showToastAlert = false) {
             showToast(`Synced with Supabase (${state.minibatches.length} batches)`);
         }
     } catch (err) {
+        state.supabaseConnected = false;
         console.error('Supabase REST sync error:', err);
         if (statusText) statusText.innerText = '⚠️ Connection error';
         if (pill) {
@@ -340,101 +349,40 @@ async function refreshDataFromSupabase(showToastAlert = false) {
 
 async function updatePRInSupabase(number, fields) {
     try {
-        await fetch(`${SUPABASE_URL}/rest/v1/prs?number=eq.${number}`, {
-            method: 'PATCH',
-            headers: {
-                ...supabaseHeaders,
-                'Prefer': 'return=minimal'
-            },
-            body: JSON.stringify({
-                ...fields,
-                updated_at: new Date().toISOString()
-            })
+        const response = await supabaseRequest(`prs?number=eq.${number}`, {
+            method: 'PATCH', headers: { Prefer: 'return=representation' },
+            body: JSON.stringify({ ...fields, updated_at: new Date().toISOString() })
         });
-    } catch (e) {
-        console.error('Supabase update failed:', e);
-    }
+        const rows = await response.json();
+        if (rows.length !== 1) throw new Error('You do not own this PR or it is no longer available.');
+        return rows[0];
+    } catch (error) { showToast(error.message); throw error; }
 }
 
-async function updateBatchPRsInSupabase(numbers, fields) {
-    if (!numbers || numbers.length === 0) return;
-    try {
-        await fetch(`${SUPABASE_URL}/rest/v1/prs?number=in.(${numbers.join(',')})`, {
-            method: 'PATCH',
-            headers: {
-                ...supabaseHeaders,
-                'Prefer': 'return=minimal'
-            },
-            body: JSON.stringify({
-                ...fields,
-                updated_at: new Date().toISOString()
-            })
-        });
-    } catch (e) {
-        console.error('Batch Supabase update failed:', e);
-    }
-}
-
-// Setup Realtime WebSocket for both PRs and Batches
+// Coalesce event bursts and refresh membership for INSERT, UPDATE and DELETE.
+let realtimeRefreshTimer = null;
 function setupSupabaseRealtime() {
-    if (!window.supabase || typeof window.supabase.createClient !== 'function') {
-        return;
-    }
-
-    try {
-        const sbClient = getSupabaseClient();
-        if (!sbClient) return;
-        
-        // 1. Listen for PR changes
-        sbClient
-            .channel('public:live_prs')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'prs' }, (payload) => {
-                const updatedRow = payload.new;
-                if (!updatedRow || !updatedRow.number) return;
-
-                const existingPR = state.allPRs.find(p => p.number === updatedRow.number);
-                if (existingPR) {
-                    existingPR.assignedReviewer = updatedRow.assigned_reviewer || 'none';
-                    existingPR.status = updatedRow.status || 'unassigned';
-                    existingPR.notes = updatedRow.notes || '';
-                    existingPR.checklist = updatedRow.checklist || {};
-
-                    renderMyPRs();
-                    renderRepoTable();
-                }
-            })
-            .subscribe();
-
-        // 2. Listen for Server-Side Minibatch locks and claims
-        sbClient
-            .channel('public:live_batches')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'batches' }, (payload) => {
-                const updatedBatch = payload.new;
-                if (!updatedBatch || !updatedBatch.id) return;
-
-                const existingBatch = state.minibatches.find(b => b.id === updatedBatch.id);
-                if (existingBatch) {
-                    const wasClaimedByMe = existingBatch.claimedBy === state.currentMaintainer;
-                    const isNowClaimedByOther = updatedBatch.claimed_by && updatedBatch.claimed_by !== 'none' && updatedBatch.claimed_by !== state.currentMaintainer;
-
-                    existingBatch.status = updatedBatch.status || 'available';
-                    existingBatch.claimedBy = updatedBatch.claimed_by || 'none';
-                    existingBatch.claimedAt = updatedBatch.claimed_at;
-
-                    renderMinibatches();
-
-                    if (!wasClaimedByMe && isNowClaimedByOther) {
-                        showToast(`🔒 @${updatedBatch.claimed_by} claimed batch "${existingBatch.title}"`);
-                    }
-                }
-            })
-            .subscribe();
-
-    } catch (err) {
-        console.warn('Realtime subscription error:', err);
-    }
+    const client = getSupabaseClient();
+    if (!client) return;
+    client.channel('hub-changes')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'prs' }, scheduleRealtimeRefresh)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'batches' }, scheduleRealtimeRefresh)
+        .subscribe();
+}
+function scheduleRealtimeRefresh() {
+    clearTimeout(realtimeRefreshTimer);
+    realtimeRefreshTimer = setTimeout(async () => {
+        // Do not drop an event that arrived during a refresh.
+        if (refreshInFlight) await refreshInFlight;
+        await refreshDataFromSupabase();
+    }, 300);
 }
 
+function isBatchAvailable(batch) {
+    return batch.status === 'available' && batch.claimedBy === 'none'
+        && batch.prNumbers.length > 0 && batch.prs.length === batch.prNumbers.length
+        && batch.prs.every(pr => pr.githubState === 'open' && !pr.isDraft && pr.files.length > 0);
+}
 
 // ==========================================
 // MINIBATCH STUDIO (SERVER-SIDE LOCKING)
@@ -499,7 +447,7 @@ function getFilteredBatches() {
         if (tierFilter !== 'all' && b.complexity !== tierFilter) return false;
 
         if (statusFilter === 'available') {
-            if (!(b.status === 'available' || b.claimedBy === 'none')) return false;
+            if (!isBatchAvailable(b)) return false;
         } else if (statusFilter === 'mine') {
             if (b.claimedBy !== state.currentMaintainer) return false;
         } else if (statusFilter === 'claimed') {
@@ -657,7 +605,7 @@ function renderCompactBatchRow(b) {
                     <div class="text-[11px] whitespace-nowrap">
                         <span class="text-emerald-400 font-bold">+${totalAdds}</span>/<span class="text-rose-400 font-bold">-${totalDels}</span>
                     </div>
-                    <span class="text-slate-400 text-[10px] hidden md:inline px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 whitespace-nowrap" title="Guaranteed disjoint files without mutual conflicts">
+                    <span class="text-slate-400 text-[10px] hidden md:inline px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 whitespace-nowrap" title="Disjoint files within this batch; GitHub checks still required">
                         📁 ${uniqueFiles.size} files
                     </span>
 
@@ -762,7 +710,7 @@ function renderGridBatchCard(b) {
                         <span class="text-xs font-mono text-cyan-400">${totalPRs} PRs</span>
                     </h3>
                     <p class="text-[11px] text-slate-400 mt-0.5">
-                        Batch contains ${totalPRs} PRs with disjoint files. 100% conflict-free merge.
+                        Batch contains ${totalPRs} PRs with disjoint files. No shared files within this batch; verify CI and mergeability.
                     </p>
                 </div>
 
@@ -862,7 +810,7 @@ function generateBatchAIPrompt(batchId) {
     p += `- **Subsystem / Domain**: \`${batch.category}\`\n`;
     p += `- **Complexity Tier**: \`${batch.complexityLabel || batch.complexity}\`\n`;
     p += `- **Total Pull Requests**: ${prs.length}\n`;
-    p += `- **Disjoint Files Guarantee**: ✅ **CONFIRMED 100% DISJOINT** (PRs inside this batch do NOT share modified files, guaranteeing zero direct git conflicts)\n`;
+    p += `- **Disjoint Files Guarantee**: ✅ **CONFIRMED 100% DISJOINT** (PRs inside this batch have disjoint files; verify current GitHub mergeability and CI)\n`;
     p += `- **Aggregate Code Churn**: +${totalAdds} / -${totalDels} lines across ${allFiles.size} unique files\n\n`;
     p += `---\n\n`;
 
@@ -952,112 +900,23 @@ function togglePRInBatch(batchId, prNumber, checked) {
 
 // Atomic Server-Side Batch Claiming (Batch-Only Invariant: PRs claimed as atomic unit)
 async function claimBatchServerSide(batchId) {
-    const batch = state.minibatches.find(b => b.id === batchId);
-    if (!batch) return;
-
-    const allBatchPRs = batch.prNumbers || [];
-    if (allBatchPRs.length === 0) {
-        showToast('Batch contains no PRs');
-        return;
-    }
-
     try {
-        // 1. Atomically claim batch in public.batches table
-        const res = await fetch(`${SUPABASE_URL}/rest/v1/batches?id=eq.${batchId}&status=eq.available`, {
-            method: 'PATCH',
-            headers: {
-                ...supabaseHeaders,
-                'Prefer': 'return=representation'
-            },
-            body: JSON.stringify({
-                status: 'claimed',
-                claimed_by: state.currentMaintainer,
-                claimed_at: new Date().toISOString(),
-                updated_at: new Date().toISOString()
-            })
+        await supabaseRequest('rpc/claim_batch', {
+            method: 'POST', body: JSON.stringify({ p_batch_id: batchId })
         });
-
-        const updatedData = await res.json();
-        if (!Array.isArray(updatedData) || updatedData.length === 0) {
-            showToast('⚠️ This batch was just claimed by another maintainer!');
-            refreshDataFromSupabase();
-            return;
-        }
-
-        // 2. Assign all PRs in public.prs table
-        await updateBatchPRsInSupabase(allBatchPRs, {
-            assigned_reviewer: state.currentMaintainer,
-            status: 'in-review'
-        });
-
-        batch.status = 'claimed';
-        batch.claimedBy = state.currentMaintainer;
-        batch.claimedAt = new Date().toISOString();
-
-        allBatchPRs.forEach(num => {
-            const pr = state.allPRs.find(p => p.number === num);
-            if (pr) {
-                pr.assignedReviewer = state.currentMaintainer;
-                pr.status = 'in-review';
-            }
-        });
-
-        renderMyPRs();
-        renderMinibatches();
-        renderRepoTable();
-
-        showToast(`Successfully claimed and locked batch "${batch.title}" (${allBatchPRs.length} PRs)!`);
-    } catch (e) {
-        console.error('Batch claim error:', e);
-        showToast('Error claiming batch from server');
-    }
+        await refreshDataFromSupabase();
+        showToast('Batch claimed successfully.');
+    } catch (error) { showToast(error.message); }
 }
 
-// Release a batch back to available state on Supabase
 async function releaseBatch(batchId) {
-    const batch = state.minibatches.find(b => b.id === batchId);
-    if (!batch) return;
-
     try {
-        await fetch(`${SUPABASE_URL}/rest/v1/batches?id=eq.${batchId}`, {
-            method: 'PATCH',
-            headers: {
-                ...supabaseHeaders,
-                'Prefer': 'return=minimal'
-            },
-            body: JSON.stringify({
-                status: 'available',
-                claimed_by: 'none',
-                claimed_at: null,
-                updated_at: new Date().toISOString()
-            })
+        await supabaseRequest('rpc/release_batch', {
+            method: 'POST', body: JSON.stringify({ p_batch_id: batchId })
         });
-
-        await updateBatchPRsInSupabase(batch.prNumbers, {
-            assigned_reviewer: 'none',
-            status: 'unassigned'
-        });
-
-        batch.status = 'available';
-        batch.claimedBy = 'none';
-        batch.claimedAt = null;
-
-        batch.prNumbers.forEach(num => {
-            const pr = state.allPRs.find(p => p.number === num);
-            if (pr) {
-                pr.assignedReviewer = 'none';
-                pr.status = 'unassigned';
-            }
-        });
-
-        renderMyPRs();
-        renderMinibatches();
-        renderRepoTable();
-
-        showToast(`Batch "${batch.title}" released and returned to Supabase!`);
-    } catch (e) {
-        console.error('Release batch error:', e);
-    }
+        await refreshDataFromSupabase();
+        showToast('Batch released successfully.');
+    } catch (error) { showToast(error.message); }
 }
 
 function regenerateMinibatches() {
@@ -1133,13 +992,13 @@ function switchBatchModalTab(tab) {
         if (btnText) btnText.innerText = 'Copy AI Prompt';
         if (textarea) textarea.value = generateBatchAIPrompt(batch.id);
     } else if (tab === 'merge') {
-        if (desc) desc.innerText = 'This script sequentially merges all selected PRs from this batch. Because files are disjoint, merging succeeds 100% conflict-free!';
+        if (desc) desc.innerText = 'This script sequentially merges all selected PRs from this batch. Verify current mergeability, approvals and CI before merging.';
         if (hint) hint.innerHTML = 'Copy and run in terminal with <code class="text-slate-400 font-mono">gh</code> CLI.';
         if (btnText) btnText.innerText = 'Copy Merge Script';
 
         let script = `# AnyPS5 Minibatch CLI Merge Sequence\n`;
         script += `# Batch: ${batch.title} (${batch.category})\n`;
-        script += `# Complexity: ${batch.complexityLabel || batch.complexity} • Disjoint files: 100% Conflict-free merge\n`;
+        script += `# Complexity: ${batch.complexityLabel || batch.complexity} • Disjoint files: Disjoint files; verify CI and mergeability\n`;
         script += `# Generated: ${new Date().toISOString()}\n\n`;
 
         selectedNums.forEach(num => {
@@ -1420,55 +1279,20 @@ function resetMyStatusFilter() {
 
 async function quickUpdateMyStatus(prNumber, newStatus) {
     const target = state.allPRs.find(p => p.number === prNumber);
+    try { await updatePRInSupabase(prNumber, { status: newStatus }); }
+    catch (error) { return; }
     if (target) target.status = newStatus;
     renderMyPRs();
-
-    await updatePRInSupabase(prNumber, { status: newStatus });
     showToast(`Status updated: ${newStatus}`);
 }
 
-async function assignPR(prNumber, maintainerId, renderNow = true) {
-    const targetMaintainer = maintainerId || state.currentMaintainer || 'boykopovar';
-    const target = state.allPRs.find(p => p.number === prNumber);
-    const newStatus = target && target.status === 'unassigned' ? 'in-review' : (target?.status || 'in-review');
-    
-    if (target) {
-        target.assignedReviewer = targetMaintainer;
-        target.status = newStatus;
-    }
-
-    if (renderNow) {
-        renderMyPRs();
-        renderMinibatches();
-        renderRepoTable();
-        renderSidebarStats();
-    }
-
-    await updatePRInSupabase(prNumber, { 
-        assigned_reviewer: targetMaintainer, 
-        status: newStatus 
-    });
+async function assignPR() {
+    showToast('Claim the complete minibatch from the Minibatches view.');
 }
-
 async function unassignPR(prNumber) {
-    const target = state.allPRs.find(p => p.number === prNumber);
-    if (target) {
-        target.assignedReviewer = 'none';
-        target.status = 'unassigned';
-    }
-
-    renderMyPRs();
-    renderMinibatches();
-    renderRepoTable();
-    renderSidebarStats();
-
-    await updatePRInSupabase(prNumber, { 
-        assigned_reviewer: 'none', 
-        status: 'unassigned' 
-    });
-    showToast(`PR #${prNumber} returned to repository`);
+    const batch = state.minibatches.find(b => b.prNumbers.includes(prNumber));
+    if (batch) await releaseBatch(batch.id);
 }
-
 
 // ==========================================
 // MODAL: CLAIM NEW PRs (CLAIM MODAL)
@@ -1534,61 +1358,11 @@ function updateClaimSelectionMsg() {
     if (msg) msg.innerText = `${state.selectedClaimPRs.size} PRs selected`;
 }
 
-function quickClaimSingle(prNumber) {
-    assignPR(prNumber, state.currentMaintainer, true);
-    renderClaimList();
-    showToast(`Claimed PR #${prNumber}`);
+function quickClaimSingle() {
+    showToast('Claim the complete minibatch from the Minibatches view.');
 }
-
-async function confirmSelectedClaims() {
-    if (state.selectedClaimPRs.size === 0) {
-        showToast('Select at least one PR checkbox');
-        return;
-    }
-    const count = state.selectedClaimPRs.size;
-    const selected = Array.from(state.selectedClaimPRs);
-    
-    selected.forEach(num => assignPR(num, state.currentMaintainer, false));
-    closeClaimModal();
-    renderMyPRs();
-    renderMinibatches();
-    renderRepoTable();
-
-    await updateBatchPRsInSupabase(selected, {
-        assigned_reviewer: state.currentMaintainer,
-        status: 'in-review'
-    });
-    showToast(`Added ${count} PRs to your queue!`);
-}
-
-async function batchClaimPreset(type, count) {
-    let pool = [];
-    if (type === 'safe') {
-        pool = state.allPRs.filter(p => p.assignedReviewer !== state.currentMaintainer && p.riskLevel === 'low');
-    } else {
-        pool = state.allPRs.filter(p => p.assignedReviewer !== state.currentMaintainer && p.category === type);
-    }
-
-    const toClaim = pool.slice(0, count);
-    if (toClaim.length === 0) {
-        showToast('No available PRs in this category');
-        return;
-    }
-
-    const numbers = toClaim.map(p => p.number);
-    numbers.forEach(num => assignPR(num, state.currentMaintainer, false));
-    closeClaimModal();
-    renderMyPRs();
-    renderMinibatches();
-    renderRepoTable();
-
-    await updateBatchPRsInSupabase(numbers, {
-        assigned_reviewer: state.currentMaintainer,
-        status: 'in-review'
-    });
-    showToast(`Claimed ${toClaim.length} PRs for @${state.currentMaintainer}!`);
-}
-
+function confirmSelectedClaims() { quickClaimSingle(); }
+function batchClaimPreset() { quickClaimSingle(); }
 
 // ==========================================
 // MODAL: PR INSPECTION DRAWER (INSPECT MODAL)
@@ -1634,12 +1408,6 @@ function openInspectModal(prNumber) {
                 pr.deletions = liveData.deletions || 0;
                 pr.totalLines = pr.additions + pr.deletions;
                 pr.fileCount = liveData.changed_files || pr.fileCount || 1;
-                updatePRInSupabase(pr.number, {
-                    additions: pr.additions,
-                    deletions: pr.deletions,
-                    total_lines: pr.totalLines,
-                    file_count: pr.fileCount
-                });
                 renderRepoTable();
                 renderMinibatches();
                 renderMyPRs();
@@ -1741,7 +1509,7 @@ function openInspectModal(prNumber) {
     } else {
         conflictBadge.className = 'px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800';
         conflictBadge.innerText = `🟢 Clean (0 conflicts)`;
-        conflictDesc.innerText = 'This PR does not touch any of the 46 high-collision hotspot files in AnyPS5. Safe to merge independently!';
+        conflictDesc.innerText = 'This PR does not touch any of the 46 high-collision hotspot files in AnyPS5. Check current mergeability and CI before merging.';
         hotspotFilesContainer.innerHTML = '';
     }
 
@@ -1868,9 +1636,11 @@ function copyGeneratedMarkdownReview() {
 async function setInspectStatus(newStatus) {
     if (!state.activeInspectPR) return;
     const num = state.activeInspectPR.number;
-    state.activeInspectPR.status = newStatus;
-    await saveInspectionAndClose();
-    showToast(`Status: ${newStatus}`);
+    const pr = state.activeInspectPR;
+    const previousStatus = pr.status;
+    pr.status = newStatus;
+    if (await saveInspectionAndClose()) showToast(`Status: ${newStatus}`);
+    else pr.status = previousStatus;
 }
 
 function getChecklistState() {
@@ -1883,25 +1653,23 @@ function getChecklistState() {
 }
 
 async function saveInspectionAndClose() {
-    if (!state.activeInspectPR) return;
-    const num = state.activeInspectPR.number;
-    const notes = document.getElementById('inspect-notes-field').value;
-    const checklist = getChecklistState();
-
-    state.activeInspectPR.notes = notes;
-    state.activeInspectPR.checklist = checklist;
-
-    closeInspectModal();
-    renderMyPRs();
-    renderMinibatches();
-    renderRepoTable();
-
-    await updatePRInSupabase(num, {
-        status: state.activeInspectPR.status,
-        notes: notes,
-        checklist: checklist
-    });
-    showToast(`Saved notes for PR #${num}`);
+    const pr = state.activeInspectPR;
+    if (!pr) return false;
+    const fields = {
+        status: pr.status,
+        notes: document.getElementById('inspect-notes-field').value,
+        checklist: getChecklistState()
+    };
+    try {
+        await updatePRInSupabase(pr.number, fields);
+        Object.assign(pr, fields);
+        closeInspectModal();
+        renderMyPRs();
+        renderMinibatches();
+        renderRepoTable();
+        showToast(`Saved notes for PR #${pr.number}`);
+        return true;
+    } catch (error) { return false; }
 }
 
 function unassignCurrentPR() {
@@ -1941,6 +1709,7 @@ function renderRepoTable() {
     const risk = document.getElementById('repo-risk-filter')?.value || 'all';
 
     let list = state.allPRs.filter(p => {
+        if (p.githubState === 'closed' || p.githubState === 'merged') return false;
         if (cat !== 'all' && p.category !== cat) return false;
         if (risk !== 'all' && p.riskLevel !== risk) return false;
         if (q) {
@@ -2357,8 +2126,8 @@ async function quickClaimSafeBatch() {
         addSafeQuickBatchToReviewer();
         return;
     }
-    const safeBatch = state.minibatches.find(b => (b.status === 'available' || b.claimedBy === 'none') && b.complexity === 'low')
-        || state.minibatches.find(b => b.status === 'available' || b.claimedBy === 'none');
+    const safeBatch = state.minibatches.find(b => isBatchAvailable(b) && b.complexity === 'low')
+        || state.minibatches.find(isBatchAvailable);
     
     if (safeBatch) {
         await claimBatchServerSide(safeBatch.id);

@@ -1,3 +1,5 @@
+> Sigurnosne promjene: prije objave primijenite migraciju i postavite maintainer pristup prema [SECURITY_ROLLOUT.md](SECURITY_ROLLOUT.md). Novi frontend koristi transakcijske RPC pozive za dodjele. Supabase service-role ključ mora biti u varijabli okruženja; prethodno izloženi ključ treba zamijeniti. CSS i Supabase klijent sada su uključeni lokalno u assets/. Mreža je potrebna za prijavu i žive podatke.
+
 # AnyPS5 Maintainer Hub & PR Coordination Center
 
 Interaktivna web aplikacija i organizacijska platforma za maintainere repozitorija [`boykopovar/AnyPS5`](https://github.com/boykopovar/AnyPS5).
@@ -9,7 +11,7 @@ Ovaj alat rješava problem velikog priljeva pull requestova (~800 otvorenih PR-o
 ## 🚀 Brzo pokretanje
 
 ### Opcija 1: Izravno otvaranje (Bez servera)
-Jednostavno dvokliknite na [`index.html`](index.html). Stranica radi 100% lokalno i offline jer je cjelokupni skup podataka svih PR-ova već predmemoriran unutar [`prs_data.js`](prs_data.js).
+Jednostavno dvokliknite na [`index.html`](index.html). Lokalni PR podaci nalaze se unutar [`prs_data.js`](prs_data.js).
 
 ### Opcija 2: Pokretanje lokalnog servera
 U PowerShell ili terminalu pokrenite:
@@ -62,7 +64,7 @@ Otvorit će se u pregledniku na adresi: `http://localhost:8000/index.html`.
   gh pr merge 6836 --repo boykopovar/AnyPS5 --auto --squash --delete-branch
   gh pr merge 6834 --repo boykopovar/AnyPS5 --auto --squash --delete-branch
   ```
-  Koju možete kopirati jednim klikom i pokrenuti u terminalu za spajanje 10–20 PR-ova u sekundi bez ikakvog merge konflikta!
+  Prije pokretanja provjerite aktualni status, odobrenja i CI svakog PR-a. Različite datoteke ne jamče uspješno spajanje ni kompatibilnost.
 
 ### 6. 🔍 Detaljni PR Drawer (Modal)
 - Klikom na bilo koji redak otvara se prozor s:
@@ -80,3 +82,10 @@ Skripta [`build_dataset.py`](build_dataset.py) može se pokrenuti u bilo kojem t
 python build_dataset.py
 ```
 Također, unutar same aplikacije nalazi se gumb **"Live GitHub Sync"** koji može dohvatiti najnovije PR-ove izravno putem GitHub API-ja (uz podršku za opcionalni GitHub Personal Access Token radi izbjegavanja rate-limita).
+
+
+## Izgradnja i provjere
+
+Browser ovisnosti su zaključane u package-lock.json. Nakon promjene dizajna ili ažuriranja paketa pokrenite `npm ci`, `npm run build` i `npm test`. Direktorij `assets/` sadrži gotov CSS i Supabase klijent pa pregled lokalnih podataka ne ovisi o CDN-u.
+
+GitHub Pages objavljuje samo `index.html`, `app.js`, `prs_data.js` i `assets/`. Administrativne skripte, tajne i sigurnosne kopije ne ulaze u objavu.

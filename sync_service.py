@@ -6,28 +6,76 @@ Synchronizes open, merged, and closed PRs from GitHub directly into Supabase usi
 
 import json
 import subprocess
-import urllib.request
-import urllib.error
 from collections import Counter
-from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
-SUPABASE_URL = "https://nzaxslgwsygpgwqcllpi.supabase.co"
-SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im56YXhzbGd3c3lncGd3cWNsbHBpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MjE1NTY2OSwiZXhwIjoyMTA3NzMxNjY5fQ.Oi_Em9zcjWQNlxZAvIOePWIMOzbXeV6XTdPWrNQFymI"
+from backend_api import request
 
-def fetch_github_prs(limit=850):
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Fetching PRs from GitHub CLI...")
-    cmd = [
-        "gh", "pr", "list",
-        "--repo", "boykopovar/AnyPS5",
-        "--state", "open",
-        "--limit", str(limit),
-        "--json", "number,title,author,createdAt,url,additions,deletions,files,isDraft"
-    ]
-    res = subprocess.run(cmd, capture_output=True, text=True)
-    if res.returncode != 0:
-        print("Error fetching GitHub PRs:", res.stderr)
-        return []
-    return json.loads(res.stdout)
+REPOSITORY = 'boykopovar/AnyPS5'
+
+
+def github_pages(endpoint):
+    result = subprocess.run(
+        ['gh', 'api', '--paginate', '--slurp', endpoint],
+        capture_output=True, text=True, encoding='utf-8', timeout=600)
+    if result.returncode:
+        raise RuntimeError('GitHub fetch failed; database was not changed')
+    pages = json.loads(result.stdout)
+    if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
+        raise ValueError('Invalid GitHub pagination response')
+    return [row for page in pages for row in page]
+
+
+def fetch_github_prs():
+    # All states are explicit: never infer closure from absence in a partial list.
+    pulls = github_pages(f'repos/{REPOSITORY}/pulls?state=all&per_page=100&sort=created&direction=asc')
+    states = [{'number': p['number'], 'github_state':
+               'merged' if p.get('merged_at') else p['state']} for p in pulls]
+    open_pulls = [p for p in pulls if p['state'] == 'open']
+    print(f'Fetching complete metadata for {len(open_pulls)} open PRs...', flush=True)
+    raw = []
+    by_number = {p['number']: p for p in states}
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for count, (pull, result) in enumerate(zip(open_pulls, pool.map(fetch_open_pr, open_pulls)), 1):
+            record, github_state = result
+            by_number[pull['number']]['github_state'] = github_state
+            if record:
+                raw.append(record)
+            if count % 50 == 0:
+                print(f'Fetched {count}/{len(open_pulls)} PRs', flush=True)
+    return raw, states
+
+
+def fetch_open_pr(p):
+    result = subprocess.run(['gh', 'api', f"repos/{REPOSITORY}/pulls/{p['number']}"],
+                            capture_output=True, text=True, encoding='utf-8', timeout=60)
+    if result.returncode:
+        raise RuntimeError(f"Failed to inspect PR #{p['number']}; database was not changed")
+    detail = json.loads(result.stdout)
+    # A PR may have closed since the initial list was fetched.
+    state = 'merged' if detail.get('merged_at') else detail['state']
+    if state != 'open':
+        return None, state
+    files = github_pages(f"repos/{REPOSITORY}/pulls/{p['number']}/files?per_page=100")
+    if len(files) != detail['changed_files']:
+        raise RuntimeError(f"Incomplete file list for PR #{p['number']}; database was not changed")
+    verify = subprocess.run(['gh', 'api', f"repos/{REPOSITORY}/pulls/{p['number']}"],
+                            capture_output=True, text=True, encoding='utf-8', timeout=60)
+    if verify.returncode:
+        raise RuntimeError('GitHub verification failed; database was not changed')
+    verified = json.loads(verify.stdout)
+    if verified['head']['sha'] != detail['head']['sha'] or verified['state'] != 'open':
+        raise RuntimeError(f"PR #{p['number']} changed during fetch; retry the sync")
+    paths = sorted({path for f in files for path in
+                    [f['filename'], f.get('previous_filename')] if path})
+    record = {'number': p['number'], 'title': detail['title'],
+                'author': {'login': (detail.get('user') or {}).get('login', 'ghost')},
+                'createdAt': detail['created_at'], 'url': detail['html_url'],
+                'additions': detail['additions'], 'deletions': detail['deletions'],
+                'files': [{'path': path} for path in paths], 'changedFiles': detail['changed_files'],
+                'isDraft': detail['draft'], 'head_sha': detail['head']['sha']}
+    return record, state
+
 
 def classify_pr(paths, title):
     p_lower = [p.lower() for p in paths]
@@ -49,11 +97,7 @@ def classify_pr(paths, title):
         return "Documentation & Debt"
     return "Other Core Subsystems"
 
-def sync():
-    raw_prs = fetch_github_prs()
-    if not raw_prs:
-        print("No PRs fetched.")
-        return
+def build_records(raw_prs):
 
     # Hotspots
     file_freq = Counter()
@@ -91,36 +135,26 @@ def sync():
             "additions": adds,
             "deletions": dels,
             "total_lines": tot,
-            "file_count": len(paths),
+            "file_count": p.get("changedFiles", len(paths)),
             "files": paths,
             "category": cat,
             "hotspots": pr_hotspots,
             "risk_level": risk,
             "size": size,
-            "is_draft": p.get("isDraft", False)
+            "is_draft": p.get("isDraft", False),
+            "head_sha": p["head_sha"],
+            "github_state": "open"
         })
 
-    print(f"Syncing {len(records)} records with Supabase...")
-    api_endpoint = f"{SUPABASE_URL}/rest/v1/prs"
-    
-    # Upsert in batches
-    BATCH_SIZE = 100
-    for i in range(0, len(records), BATCH_SIZE):
-        batch = records[i:i + BATCH_SIZE]
-        payload = json.dumps(batch).encode("utf-8")
-        req = urllib.request.Request(api_endpoint, data=payload, headers={
-            "apikey": SERVICE_KEY,
-            "Authorization": f"Bearer {SERVICE_KEY}",
-            "Content-Type": "application/json",
-            "Prefer": "resolution=merge-duplicates"
-        })
-        try:
-            with urllib.request.urlopen(req) as resp:
-                pass
-        except urllib.error.HTTPError as e:
-            print(f"Error on batch: {e.code} - {e.read().decode()}")
+    return records
 
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Sync complete! Supabase database updated successfully.")
+
+def sync():
+    raw_prs, states = fetch_github_prs()
+    records = build_records(raw_prs)
+    request('rpc/sync_github_snapshot', {'p_records': records, 'p_states': states})
+    print(f'Synchronized {len(records)} open PRs and {len(states)} explicit GitHub states.')
+
 
 if __name__ == "__main__":
     sync()

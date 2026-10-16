@@ -4,46 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>AnyPS5 Maintainer Workspace</title>
-    <!-- Tailwind CSS CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    colors: {
-                        obsidian: '#050813',
-                        darkpanel: '#090e1d',
-                        cardbg: '#0e162a',
-                        ps5: {
-                            blue: '#00439c',
-                            electric: '#0070d1',
-                            glow: '#00b4ff',
-                            ceramic: '#f5f7fb',
-                            muted: '#8e9bb0',
-                            dark: '#030611',
-                            triangle: '#00f076',
-                            circle: '#ff3b5c',
-                            cross: '#0070d1',
-                            square: '#d946ef'
-                        },
-                        accent: {
-                            cyan: '#00b4ff',
-                            purple: '#a855f7',
-                            emerald: '#00f076',
-                            amber: '#f59e0b',
-                            rose: '#ff3b5c'
-                        }
-                    },
-                    fontFamily: {
-                        mono: ['JetBrains Mono', 'Fira Code', 'Consolas', 'monospace']
-                    }
-                }
-            }
-        }
-    </script>
-    <!-- Supabase JS Client CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <link rel="stylesheet" href="assets/app.css">
+    <script src="assets/supabase.js"></script>
     <style>
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: #050813; }
@@ -238,16 +200,16 @@
             <div class="p-4 sm:p-5 rounded-xl bg-cardbg border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-md">
                 <div class="space-y-1">
                     <h2 class="text-base sm:text-lg font-bold text-slate-100 flex items-center gap-2">
-                        <span>⚡</span> Minibatch Studio (Automated Conflict-Free Batches)
+                        <span>⚡</span> Minibatch Studio
                     </h2>
                     <p class="text-xs text-slate-400 max-w-2xl">
                         Algorithm generates optimal batches (1 to 10 PRs) based on complexity and subsystem. 
-                        <strong>100% Disjoint Files Guarantee:</strong> PRs inside the same batch never touch the same files!
+                        <strong>Disjoint files within each batch:</strong> Verify current GitHub mergeability and CI before merging.
                     </p>
                 </div>
                 <div class="flex items-center gap-2 w-full sm:w-auto">
                     <button onclick="regenerateMinibatches()" class="px-3 py-1.5 bg-cyan-950 hover:bg-cyan-900 text-cyan-300 border border-cyan-800 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 whitespace-nowrap">
-                        <span>🔄</span> Regenerate Batches
+                        <span>🔄</span> Refresh Batches
                     </button>
                 </div>
             </div>
@@ -498,7 +460,7 @@
                     
                     <button onclick="quickClaimSafeBatch(5)" class="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-blue-700 to-cyan-600 hover:from-blue-600 hover:to-cyan-500 text-white font-bold text-xs shadow-md shadow-blue-700/30 transition flex items-center justify-center gap-2 cursor-pointer">
                         <span>🟢</span>
-                        <span>Claim 5 Quick-Merge PRs</span>
+                        <span>Claim an Available Batch</span>
                     </button>
 
                     <button onclick="switchMainView('batches')" class="w-full py-2 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 font-semibold text-xs transition flex items-center justify-center gap-2 cursor-pointer">
