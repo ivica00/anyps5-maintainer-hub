@@ -2,7 +2,7 @@
 <html lang="hr" class="dark">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>AnyPS5 Maintainer Workspace</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -42,37 +42,44 @@
             color: #00e5ff;
             border-color: #00e5ff;
         }
+        /* Mobile tap highlight reset */
+        * { -webkit-tap-highlight-color: transparent; }
     </style>
 </head>
 <body class="bg-obsidian text-slate-200 min-h-screen flex flex-col font-sans selection:bg-cyan-500/30 selection:text-cyan-200">
 
-    <!-- Top Simplified Bar -->
-    <header class="border-b border-slate-800/80 bg-darkpanel/90 backdrop-blur sticky top-0 z-40">
-        <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="flex items-center justify-between h-16">
-                <!-- Branding -->
-                <div class="flex items-center gap-3">
-                    <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center font-black text-white text-base shadow-lg shadow-cyan-500/20">
-                        Ψ
-                    </div>
-                    <div>
-                        <div class="flex items-center gap-2">
-                            <span class="font-bold text-slate-100 text-base tracking-tight">AnyPS5</span>
-                            <span class="text-[11px] px-2 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800 font-mono">Maintainer Workspace</span>
-                            <!-- Supabase Realtime Status Pill -->
-                            <span id="supabase-status-pill" class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800/80 font-mono flex items-center gap-1">
-                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Supabase Realtime
-                            </span>
+    <!-- Top Responsive Navigation Bar -->
+    <header class="border-b border-slate-800/80 bg-darkpanel/95 backdrop-blur sticky top-0 z-40">
+        <div class="max-w-6xl mx-auto px-3 sm:px-6 lg:px-8 py-2.5 sm:py-3">
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <!-- Branding & Supabase Status -->
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2.5">
+                        <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center font-black text-white text-base shadow-lg shadow-cyan-500/20 flex-shrink-0">
+                            Ψ
+                        </div>
+                        <div>
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <span class="font-bold text-slate-100 text-base tracking-tight">AnyPS5</span>
+                                <span class="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800 font-mono">Maintainer Workspace</span>
+                            </div>
                         </div>
                     </div>
+
+                    <!-- Connection Status Badge (Clickable to force sync) -->
+                    <button onclick="refreshDataFromSupabase(true)" title="Klikni za ručno osvježavanje iz Supabasea" 
+                            id="supabase-status-pill" class="text-[10px] px-2.5 py-1 rounded-full bg-slate-900 text-slate-400 border border-slate-800 font-mono flex items-center gap-1.5 hover:border-slate-700 transition cursor-pointer">
+                        <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+                        <span id="supabase-status-text">Spajanje...</span>
+                    </button>
                 </div>
 
-                <!-- Maintainer Identity & Navigation Switch -->
-                <div class="flex items-center gap-3">
-                    <!-- Maintainer Selector -->
-                    <div class="flex items-center gap-2 bg-slate-900 border border-slate-700/80 rounded-lg px-2.5 py-1 text-xs">
-                        <span class="text-slate-400">👤 Maintainer:</span>
-                        <select id="current-maintainer-select" class="bg-transparent text-cyan-300 font-semibold focus:outline-none cursor-pointer">
+                <!-- Maintainer Selector & Tab Switcher (Fully Responsive) -->
+                <div class="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full md:w-auto">
+                    <!-- Maintainer Selector Dropdown -->
+                    <div class="flex-1 sm:flex-initial flex items-center gap-1.5 bg-slate-900 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs">
+                        <span class="text-slate-400 whitespace-nowrap text-[11px]">👤 Ja:</span>
+                        <select id="current-maintainer-select" class="bg-transparent text-cyan-300 font-semibold focus:outline-none cursor-pointer w-full text-xs">
                             <option value="boykopovar" class="bg-slate-900 text-slate-200">@boykopovar (Core)</option>
                             <option value="Honza11" class="bg-slate-900 text-slate-200">@Honza11 (AGC / Vulkan)</option>
                             <option value="Eljack" class="bg-slate-900 text-slate-200">@Eljack (AGC & Subsystems)</option>
@@ -84,13 +91,13 @@
                         </select>
                     </div>
 
-                    <!-- View Switcher (My PRs vs Full Repo) -->
-                    <div class="flex p-0.5 bg-slate-900 border border-slate-800 rounded-lg text-xs font-medium">
-                        <button id="view-tab-mine" onclick="switchMainView('mine')" class="tab-btn active px-3.5 py-1 rounded-md transition flex items-center gap-1.5 border border-transparent">
+                    <!-- View Switcher Tabs -->
+                    <div class="flex p-0.5 bg-slate-900 border border-slate-800 rounded-lg text-xs font-medium w-full sm:w-auto justify-center">
+                        <button id="view-tab-mine" onclick="switchMainView('mine')" class="tab-btn active flex-1 sm:flex-initial px-3 py-1.5 rounded-md transition flex items-center justify-center gap-1.5 border border-transparent whitespace-nowrap">
                             <span>👤</span> Moji PR-ovi (<span id="my-pr-count-badge">0</span>)
                         </button>
-                        <button id="view-tab-repo" onclick="switchMainView('repo')" class="tab-btn px-3.5 py-1 rounded-md transition text-slate-400 hover:text-slate-200 border border-transparent flex items-center gap-1.5">
-                            <span>🌐</span> Cijeli repozitorij (790)
+                        <button id="view-tab-repo" onclick="switchMainView('repo')" class="tab-btn flex-1 sm:flex-initial px-3 py-1.5 rounded-md transition text-slate-400 hover:text-slate-200 border border-transparent flex items-center justify-center gap-1.5 whitespace-nowrap">
+                            <span>🌐</span> Cijeli repozitorij (<span id="repo-total-count-badge">808</span>)
                         </button>
                     </div>
                 </div>
@@ -99,69 +106,69 @@
     </header>
 
     <!-- Main Container -->
-    <main class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-6">
+    <main class="max-w-6xl mx-auto px-3 sm:px-6 lg:px-8 py-5 sm:py-7 flex-1 w-full space-y-5">
 
         <!-- ================= VIEW 1: MOJI PR-OVI (DEFAULT FOCUS) ================= -->
-        <section id="view-mine-section" class="space-y-6">
+        <section id="view-mine-section" class="space-y-5">
             
             <!-- Hero Action Banner -->
-            <div class="p-6 rounded-2xl bg-gradient-to-r from-cardbg via-darkpanel to-cardbg border border-slate-800 shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                <div>
-                    <h2 class="text-xl font-bold text-slate-100 flex items-center gap-2">
+            <div class="p-4 sm:p-6 rounded-2xl bg-gradient-to-r from-cardbg via-darkpanel to-cardbg border border-slate-800 shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div class="space-y-1">
+                    <h2 class="text-lg sm:text-xl font-bold text-slate-100 flex items-center gap-2">
                         <span>👋</span> Dobrodošao, <span id="hero-maintainer-name" class="text-cyan-400 font-mono">@boykopovar</span>
                     </h2>
-                    <p class="text-sm text-slate-400 mt-1">
-                        Ovdje se nalaze PR-ovi dodijeljeni tebi za pregled i testiranje.
+                    <p class="text-xs sm:text-sm text-slate-400">
+                        Ovdje se nalaze PR-ovi dodijeljeni tebi za pregled i testiranje. Sinkronizirano sa Supabaseom u stvarnom vremenu.
                     </p>
                 </div>
 
-                <div class="flex items-center gap-3 w-full sm:w-auto">
-                    <!-- Primary Button: Claim PRs -->
-                    <button onclick="openClaimModal()" class="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-sm shadow-lg shadow-cyan-600/30 transition flex items-center justify-center gap-2">
+                <div class="flex items-center gap-2.5 w-full sm:w-auto">
+                    <!-- Primary Action: Claim PRs -->
+                    <button onclick="openClaimModal()" class="w-full sm:w-auto px-4 sm:px-5 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-white font-bold text-xs sm:text-sm shadow-lg shadow-cyan-600/30 transition flex items-center justify-center gap-2">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
                         Preuzmi nove PR-ove za sebe
                     </button>
                 </div>
             </div>
 
-            <!-- Status Quick Filter Pills for My PRs -->
-            <div id="my-status-pills" class="flex flex-wrap items-center gap-2 text-xs">
-                <button onclick="filterMyPRs('all')" class="my-pill active px-3 py-1.5 rounded-lg bg-slate-800 border border-cyan-500/50 text-cyan-300 font-medium">
-                    Svi moji PR-ovi (<span id="my-stat-all">0</span>)
+            <!-- Status Quick Filter Pills for My PRs (Wrap on mobile) -->
+            <div id="my-status-pills" class="flex flex-wrap items-center gap-1.5 sm:gap-2 text-xs">
+                <button onclick="filterMyPRs('all', this)" class="my-pill active px-3 py-1.5 rounded-lg bg-slate-800 border border-cyan-500/50 text-cyan-300 font-medium">
+                    Svi moji (<span id="my-stat-all">0</span>)
                 </button>
-                <button onclick="filterMyPRs('pending')" class="my-pill px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200">
-                    🔍 Čeka moj pregled (<span id="my-stat-pending">0</span>)
+                <button onclick="filterMyPRs('pending', this)" class="my-pill px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200">
+                    🔍 Čeka pregled (<span id="my-stat-pending">0</span>)
                 </button>
-                <button onclick="filterMyPRs('approved')" class="my-pill px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200">
+                <button onclick="filterMyPRs('approved', this)" class="my-pill px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200">
                     ✅ Odobreno (<span id="my-stat-approved">0</span>)
                 </button>
-                <button onclick="filterMyPRs('changes')" class="my-pill px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200">
-                    ⚠️ Zatražene izmjene (<span id="my-stat-changes">0</span>)
+                <button onclick="filterMyPRs('changes', this)" class="my-pill px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200">
+                    ⚠️ Traži izmjene (<span id="my-stat-changes">0</span>)
                 </button>
-                <button onclick="filterMyPRs('ready')" class="my-pill px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200">
-                    🚀 Spreman za merge (<span id="my-stat-ready">0</span>)
+                <button onclick="filterMyPRs('ready', this)" class="my-pill px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200">
+                    🚀 Za merge (<span id="my-stat-ready">0</span>)
                 </button>
             </div>
 
             <!-- List of My Assigned PRs -->
-            <div id="my-prs-container" class="space-y-4">
+            <div id="my-prs-container" class="space-y-3.5">
                 <!-- Dynamically rendered by app.js -->
             </div>
 
             <!-- Empty State (Shown if no PRs assigned) -->
-            <div id="my-prs-empty" class="hidden p-12 text-center rounded-2xl bg-darkpanel border border-slate-800/80 space-y-4">
-                <div class="text-5xl">📭</div>
+            <div id="my-prs-empty" class="hidden p-8 sm:p-12 text-center rounded-2xl bg-darkpanel border border-slate-800/80 space-y-4">
+                <div class="text-4xl sm:text-5xl">📭</div>
                 <div class="space-y-1">
-                    <h3 class="text-lg font-bold text-slate-200">Trenutno nemaš dodijeljenih PR-ova</h3>
-                    <p class="text-sm text-slate-400 max-w-md mx-auto">
-                        Tvoj radni red je prazan. Klikni na gumb ispod kako bi preuzeo PR-ove iz repozitorija prema željenom podsustavu.
+                    <h3 class="text-base sm:text-lg font-bold text-slate-200">Trenutno nemaš dodijeljenih PR-ova</h3>
+                    <p class="text-xs sm:text-sm text-slate-400 max-w-md mx-auto">
+                        Tvoj radni red je prazan. Klikni na gumb ispod kako bi preuzeo PR-ove iz baze.
                     </p>
                 </div>
-                <div class="flex items-center justify-center gap-3 pt-2">
-                    <button onclick="quickClaimSafeBatch(5)" class="px-4 py-2 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800 text-xs font-semibold rounded-xl transition">
+                <div class="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-2">
+                    <button onclick="quickClaimSafeBatch(5)" class="w-full sm:w-auto px-4 py-2 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800 text-xs font-semibold rounded-xl transition">
                         🟢 Preuzmi 5 sigurnih Quick-Merge PR-ova
                     </button>
-                    <button onclick="openClaimModal()" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold rounded-xl transition shadow-md shadow-cyan-600/30">
+                    <button onclick="openClaimModal()" class="w-full sm:w-auto px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold rounded-xl transition shadow-md shadow-cyan-600/30">
                         ➕ Odaberi iz repozitorija...
                     </button>
                 </div>
@@ -172,54 +179,58 @@
 
         <!-- ================= VIEW 2: CIJELI REPOZITORIJ (SEKUNDARNI TAB) ================= -->
         <section id="view-repo-section" class="hidden space-y-4">
-            <div class="p-4 rounded-xl bg-cardbg border border-slate-800 flex flex-wrap items-center justify-between gap-3">
+            <div class="p-4 rounded-xl bg-cardbg border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                 <div>
-                    <h2 class="text-base font-bold text-slate-100">Cijeli repozitorij (790 otvorenih PR-ova)</h2>
+                    <h2 class="text-base font-bold text-slate-100 flex items-center gap-2">
+                        <span>🌐</span> Svi otvoreni PR-ovi u bazi (<span id="repo-count-title">808</span>)
+                    </h2>
                     <p class="text-xs text-slate-400">Pregled svih otvorenih PR-ova s filterima za pretraživanje i preuzimanje.</p>
                 </div>
-                <div class="flex items-center gap-2">
-                    <button onclick="quickClaimSafeBatch(5)" class="px-3.5 py-1.5 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800 text-xs font-semibold rounded-lg transition">
-                        🚀 Preuzmi 5 Quick-Merge PR-ova
+                <div class="flex items-center gap-2 w-full sm:w-auto">
+                    <button onclick="quickClaimSafeBatch(5)" class="flex-1 sm:flex-initial px-3 py-1.5 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800 text-xs font-semibold rounded-lg transition text-center whitespace-nowrap">
+                        🚀 Preuzmi 5 Safe PR-ova
                     </button>
-                    <button onclick="switchMainView('mine')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-medium rounded-lg transition">
-                        &larr; Povratak na moje PR-ove
+                    <button onclick="switchMainView('mine')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-medium rounded-lg transition whitespace-nowrap">
+                        &larr; Moji PR-ovi
                     </button>
                 </div>
             </div>
 
             <!-- Repo Filter Bar -->
-            <div class="p-3.5 rounded-xl bg-darkpanel border border-slate-800 flex flex-wrap items-center gap-2.5">
+            <div class="p-3 rounded-xl bg-darkpanel border border-slate-800 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                 <input type="text" id="repo-search" placeholder="Pretraži po broju PR-a, nazivu, autoru ili datoteci..." 
-                       class="flex-1 min-w-[220px] bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500">
+                       class="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500">
 
-                <select id="repo-cat-filter" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-300 focus:outline-none">
-                    <option value="all">Svi podsustavi</option>
-                    <option value="AGC & Graphics">AGC & Grafika</option>
-                    <option value="PRX High-Level Modules">PRX Moduli</option>
-                    <option value="Kernel & Syscalls">Kernel & Syscalls</option>
-                    <option value="Shader & Relinker">Shader & Relinker</option>
-                    <option value="LibC & Base Runtime">LibC & Runtime</option>
-                    <option value="Build & Tooling">Build & Tooling</option>
-                </select>
+                <div class="flex gap-2">
+                    <select id="repo-cat-filter" class="flex-1 sm:flex-initial bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-slate-300 focus:outline-none">
+                        <option value="all">Svi podsustavi</option>
+                        <option value="AGC & Graphics">AGC & Grafika</option>
+                        <option value="PRX High-Level Modules">PRX Moduli</option>
+                        <option value="Kernel & Syscalls">Kernel & Syscalls</option>
+                        <option value="Shader & Relinker">Shader & Relinker</option>
+                        <option value="LibC & Base Runtime">LibC & Runtime</option>
+                        <option value="Build & Tooling">Build & Tooling</option>
+                    </select>
 
-                <select id="repo-risk-filter" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-300 focus:outline-none">
-                    <option value="all">Svi rizici</option>
-                    <option value="low">🟢 Quick Merge (Bez konflikta)</option>
-                    <option value="high">🔴 Hotspot rizik</option>
-                </select>
+                    <select id="repo-risk-filter" class="flex-1 sm:flex-initial bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-slate-300 focus:outline-none">
+                        <option value="all">Svi rizici</option>
+                        <option value="low">🟢 Quick Merge</option>
+                        <option value="high">🔴 Hotspot rizik</option>
+                    </select>
+                </div>
             </div>
 
-            <!-- Repo PR Table -->
+            <!-- Repo PR Table (with touch scroll) -->
             <div class="rounded-xl bg-cardbg border border-slate-800 overflow-hidden shadow-lg">
                 <div class="overflow-x-auto">
-                    <table class="w-full text-left border-collapse text-xs">
+                    <table class="w-full text-left border-collapse text-xs min-w-[600px]">
                         <thead>
                             <tr class="border-b border-slate-800 bg-slate-950/70 text-slate-400 font-semibold uppercase tracking-wider">
                                 <th class="px-4 py-3 w-16">PR #</th>
                                 <th class="px-4 py-3">Naziv i autor</th>
                                 <th class="px-4 py-3">Podsustav</th>
                                 <th class="px-4 py-3">Rizik</th>
-                                <th class="px-4 py-3">Trenutni zaduženi</th>
+                                <th class="px-4 py-3">Zaduženi</th>
                                 <th class="px-4 py-3 text-right">Akcija</th>
                             </tr>
                         </thead>
@@ -235,15 +246,15 @@
 
 
     <!-- ================= MODAL: PREUZMI NOVE PR-OVE (CLAIM MODAL) ================= -->
-    <div id="claim-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4">
-        <div class="bg-cardbg border border-slate-700 rounded-2xl max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+    <div id="claim-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-3 sm:p-4">
+        <div class="bg-cardbg border border-slate-700 rounded-2xl max-w-2xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
             <!-- Header -->
-            <div class="p-5 border-b border-slate-800 bg-slate-950/80 flex items-center justify-between">
+            <div class="p-4 sm:p-5 border-b border-slate-800 bg-slate-950/80 flex items-center justify-between">
                 <div>
-                    <h3 class="text-base font-bold text-slate-100 flex items-center gap-2">
+                    <h3 class="text-sm sm:text-base font-bold text-slate-100 flex items-center gap-2">
                         <span>➕</span> Preuzmi PR-ove za sebe
                     </h3>
-                    <p class="text-xs text-slate-400 mt-0.5">Odaberi PR-ove koje želiš ispitati i dodijeliti svom računu (<span class="text-cyan-400 font-mono" id="claim-user-tag">@boykopovar</span>).</p>
+                    <p class="text-xs text-slate-400 mt-0.5">Dodijeli PR-ove svom računu (<span class="text-cyan-400 font-mono" id="claim-user-tag">@boykopovar</span>).</p>
                 </div>
                 <button onclick="closeClaimModal()" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
@@ -251,18 +262,18 @@
             </div>
 
             <!-- Quick Presets -->
-            <div class="p-4 border-b border-slate-800 bg-slate-900/40">
+            <div class="p-3 sm:p-4 border-b border-slate-800 bg-slate-900/40">
                 <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Brzi paketi za preuzimanje:</div>
-                <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                    <button onclick="batchClaimPreset('safe', 5)" class="p-2.5 rounded-lg bg-emerald-950/50 hover:bg-emerald-900/60 border border-emerald-800/80 text-left transition group">
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <button onclick="batchClaimPreset('safe', 5)" class="p-2.5 rounded-lg bg-emerald-950/50 hover:bg-emerald-900/60 border border-emerald-800/80 text-left transition">
                         <div class="text-xs font-bold text-emerald-300">🟢 5 Sigurnih Quick-Merge</div>
                         <div class="text-[10px] text-emerald-400/80 mt-0.5">0 konflikata, mali diffovi</div>
                     </button>
-                    <button onclick="batchClaimPreset('AGC & Graphics', 5)" class="p-2.5 rounded-lg bg-indigo-950/50 hover:bg-indigo-900/60 border border-indigo-800/80 text-left transition group">
+                    <button onclick="batchClaimPreset('AGC & Graphics', 5)" class="p-2.5 rounded-lg bg-indigo-950/50 hover:bg-indigo-900/60 border border-indigo-800/80 text-left transition">
                         <div class="text-xs font-bold text-indigo-300">🎮 5 AGC & Grafika</div>
                         <div class="text-[10px] text-indigo-400/80 mt-0.5">Vulkan & Driver PR-ovi</div>
                     </button>
-                    <button onclick="batchClaimPreset('Kernel & Syscalls', 5)" class="p-2.5 rounded-lg bg-blue-950/50 hover:bg-blue-900/60 border border-blue-800/80 text-left transition group">
+                    <button onclick="batchClaimPreset('Kernel & Syscalls', 5)" class="p-2.5 rounded-lg bg-blue-950/50 hover:bg-blue-900/60 border border-blue-800/80 text-left transition">
                         <div class="text-xs font-bold text-blue-300">🧠 5 Kernel & Syscalls</div>
                         <div class="text-[10px] text-blue-400/80 mt-0.5">Memorija, dretve, BSD</div>
                     </button>
@@ -270,19 +281,19 @@
             </div>
 
             <!-- PR List for Individual Claiming -->
-            <div class="p-4 flex-1 overflow-y-auto space-y-2" id="claim-pr-list">
+            <div class="p-3 sm:p-4 flex-1 overflow-y-auto space-y-2" id="claim-pr-list">
                 <!-- Injected dynamically -->
             </div>
 
             <!-- Footer -->
-            <div class="p-4 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between">
+            <div class="p-3 sm:p-4 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between">
                 <span class="text-xs text-slate-400" id="claim-selected-msg">0 odabrano</span>
                 <div class="flex gap-2">
-                    <button onclick="closeClaimModal()" class="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 rounded-lg border border-slate-700">
+                    <button onclick="closeClaimModal()" class="px-3 sm:px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 rounded-lg border border-slate-700">
                         Zatvori
                     </button>
                     <button onclick="confirmSelectedClaims()" class="px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-xs font-bold text-white rounded-lg shadow-md shadow-cyan-600/30">
-                        Dodaj odabrane u moj red
+                        Dodaj odabrane
                     </button>
                 </div>
             </div>
@@ -291,137 +302,137 @@
 
 
     <!-- ================= MODAL: ALATI ZA ISPITIVANJE PR-A (PR INSPECTION DRAWER) ================= -->
-    <div id="inspect-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4">
-        <div class="bg-cardbg border border-slate-700 rounded-2xl max-w-3xl w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
+    <div id="inspect-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-3 sm:p-4">
+        <div class="bg-cardbg border border-slate-700 rounded-2xl max-w-3xl w-full max-h-[94vh] flex flex-col shadow-2xl overflow-hidden">
             <!-- Header -->
-            <div class="p-5 border-b border-slate-800 bg-slate-950/80 flex items-start justify-between">
-                <div class="space-y-1 pr-4">
-                    <div class="flex items-center gap-2">
-                        <span id="inspect-pr-num" class="font-mono font-bold text-cyan-400 text-lg">#0000</span>
+            <div class="p-4 sm:p-5 border-b border-slate-800 bg-slate-950/80 flex items-start justify-between">
+                <div class="space-y-1 pr-3">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span id="inspect-pr-num" class="font-mono font-bold text-cyan-400 text-base sm:text-lg">#0000</span>
                         <div id="inspect-pr-cat"></div>
                         <div id="inspect-pr-risk"></div>
                     </div>
-                    <h2 id="inspect-pr-title" class="text-base font-bold text-slate-100">PR Title</h2>
-                    <div class="text-xs text-slate-400 flex items-center gap-2">
+                    <h2 id="inspect-pr-title" class="text-sm sm:text-base font-bold text-slate-100 line-clamp-2">PR Title</h2>
+                    <div class="text-[11px] sm:text-xs text-slate-400 flex items-center gap-2 flex-wrap">
                         <span>Autor: <strong id="inspect-pr-author" class="font-mono text-slate-200"></strong></span>
                         <span>•</span>
                         <span id="inspect-pr-date"></span>
                     </div>
                 </div>
-                <button onclick="closeInspectModal()" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800">
+                <button onclick="closeInspectModal()" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 flex-shrink-0">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                 </button>
             </div>
 
             <!-- Body: Inspection Tools -->
-            <div class="p-5 overflow-y-auto space-y-5 flex-1 text-xs">
+            <div class="p-4 sm:p-5 overflow-y-auto space-y-4 flex-1 text-xs">
                 
                 <!-- ALAT 1: Hotspot & Conflict Radar -->
-                <div class="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
+                <div class="p-3 sm:p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
                     <div class="flex items-center justify-between">
                         <span class="font-bold text-slate-200 flex items-center gap-1.5 text-xs">
                             <span>🎯</span> Alat 1: Analiza konflikata i Hotspot kolizija
                         </span>
-                        <span id="inspect-conflict-status" class="px-2 py-0.5 rounded text-[11px] font-semibold"></span>
+                        <span id="inspect-conflict-status" class="px-2 py-0.5 rounded text-[10px] font-semibold"></span>
                     </div>
                     <p id="inspect-conflict-desc" class="text-slate-400 text-[11px]"></p>
                     <div id="inspect-hotspot-files" class="space-y-1 pt-1"></div>
                 </div>
 
                 <!-- ALAT 2: Terminal CLI Sandbox Commands -->
-                <div class="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5">
+                <div class="p-3 sm:p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
                     <span class="font-bold text-slate-200 flex items-center gap-1.5 text-xs">
                         <span>💻</span> Alat 2: Brze terminalske komande (GitHub CLI)
                     </span>
                     
                     <div class="space-y-1.5">
                         <div class="flex items-center justify-between bg-slate-900 p-2 rounded border border-slate-800 font-mono text-cyan-300">
-                            <span id="inspect-cmd-checkout">gh pr checkout 0000</span>
-                            <button onclick="copyText('inspect-cmd-checkout', 'Kopirano: gh checkout')" class="text-slate-400 hover:text-white underline text-[11px] ml-2">Kopiraj</button>
+                            <span id="inspect-cmd-checkout" class="truncate">gh pr checkout 0000</span>
+                            <button onclick="copyText('inspect-cmd-checkout', 'Kopirano: gh checkout')" class="text-slate-400 hover:text-white underline text-[11px] ml-2 flex-shrink-0">Kopiraj</button>
                         </div>
                         <div class="flex items-center justify-between bg-slate-900 p-2 rounded border border-slate-800 font-mono text-slate-300">
-                            <span id="inspect-cmd-diff">gh pr diff 0000</span>
-                            <button onclick="copyText('inspect-cmd-diff', 'Kopirano: gh diff')" class="text-slate-400 hover:text-white underline text-[11px] ml-2">Kopiraj</button>
+                            <span id="inspect-cmd-diff" class="truncate">gh pr diff 0000</span>
+                            <button onclick="copyText('inspect-cmd-diff', 'Kopirano: gh diff')" class="text-slate-400 hover:text-white underline text-[11px] ml-2 flex-shrink-0">Kopiraj</button>
                         </div>
                         <div class="flex items-center justify-between bg-slate-900 p-2 rounded border border-slate-800 font-mono text-emerald-400">
-                            <span id="inspect-cmd-merge">gh pr merge 0000 --squash --delete-branch</span>
-                            <button onclick="copyText('inspect-cmd-merge', 'Kopirano: gh merge')" class="text-slate-400 hover:text-white underline text-[11px] ml-2">Kopiraj</button>
+                            <span id="inspect-cmd-merge" class="truncate">gh pr merge 0000 --squash</span>
+                            <button onclick="copyText('inspect-cmd-merge', 'Kopirano: gh merge')" class="text-slate-400 hover:text-white underline text-[11px] ml-2 flex-shrink-0">Kopiraj</button>
                         </div>
                     </div>
                 </div>
 
                 <!-- ALAT 3: PS5 Quality & Review Checklist -->
-                <div class="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
+                <div class="p-3 sm:p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
                     <span class="font-bold text-slate-200 flex items-center gap-1.5 text-xs">
                         <span>📋</span> Alat 3: AnyPS5 Kontrolna lista za recenziju
                     </span>
                     <div class="space-y-1.5 text-slate-300" id="inspect-checklist">
                         <label class="flex items-center gap-2 cursor-pointer hover:text-slate-100">
-                            <input type="checkbox" id="chk-build" class="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-cyan-500" onchange="saveChecklistState()">
+                            <input type="checkbox" id="chk-build" class="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-cyan-500">
                             <span>Kompilacija prolazi (CMakeLists / Clang / MSVC)</span>
                         </label>
                         <label class="flex items-center gap-2 cursor-pointer hover:text-slate-100">
-                            <input type="checkbox" id="chk-types" class="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-cyan-500" onchange="saveChecklistState()">
+                            <input type="checkbox" id="chk-types" class="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-cyan-500">
                             <span>Provjereni SCE firmware potpisi i tipovi struktura</span>
                         </label>
                         <label class="flex items-center gap-2 cursor-pointer hover:text-slate-100">
-                            <input type="checkbox" id="chk-locks" class="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-cyan-500" onchange="saveChecklistState()">
+                            <input type="checkbox" id="chk-locks" class="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-cyan-500">
                             <span>Nema race conditiona / dretveni lockovi se ispravno oslobađaju</span>
                         </label>
                         <label class="flex items-center gap-2 cursor-pointer hover:text-slate-100">
-                            <input type="checkbox" id="chk-tests" class="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-cyan-500" onchange="saveChecklistState()">
-                            <span>Uključeni regresijski testovi (npr. u tests/Graphics.cpp ili sl.)</span>
+                            <input type="checkbox" id="chk-tests" class="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-cyan-500">
+                            <span>Uključeni regresijski testovi</span>
                         </label>
                     </div>
                 </div>
 
                 <!-- ALAT 4: Maintainer Notepad & Status Verdict -->
-                <div class="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-3">
+                <div class="p-3 sm:p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2.5">
                     <span class="font-bold text-slate-200 flex items-center gap-1.5 text-xs">
                         <span>📝</span> Alat 4: Moja ocjena i bilješke recenzije
                     </span>
                     
-                    <!-- Quick Verdict Buttons -->
+                    <!-- Quick Verdict Buttons (Responsive Grid) -->
                     <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                        <button onclick="setInspectStatus('approved')" class="py-2 px-2.5 rounded-lg bg-emerald-950/80 hover:bg-emerald-800 border border-emerald-700 text-emerald-300 font-semibold transition text-center">
+                        <button onclick="setInspectStatus('approved')" class="py-2 px-2 rounded-lg bg-emerald-950/80 hover:bg-emerald-800 border border-emerald-700 text-emerald-300 font-semibold transition text-center text-xs">
                             ✅ Odobri
                         </button>
-                        <button onclick="setInspectStatus('changes')" class="py-2 px-2.5 rounded-lg bg-amber-950/80 hover:bg-amber-800 border border-amber-700 text-amber-300 font-semibold transition text-center">
+                        <button onclick="setInspectStatus('changes')" class="py-2 px-2 rounded-lg bg-amber-950/80 hover:bg-amber-800 border border-amber-700 text-amber-300 font-semibold transition text-center text-xs">
                             ⚠️ Traži izmjene
                         </button>
-                        <button onclick="setInspectStatus('conflict')" class="py-2 px-2.5 rounded-lg bg-rose-950/80 hover:bg-rose-800 border border-rose-700 text-rose-300 font-semibold transition text-center">
-                            🚫 Konflikt / Blokiraj
+                        <button onclick="setInspectStatus('conflict')" class="py-2 px-2 rounded-lg bg-rose-950/80 hover:bg-rose-800 border border-rose-700 text-rose-300 font-semibold transition text-center text-xs">
+                            🚫 Konflikt
                         </button>
-                        <button onclick="setInspectStatus('ready')" class="py-2 px-2.5 rounded-lg bg-cyan-950/80 hover:bg-cyan-800 border border-cyan-700 text-cyan-300 font-semibold transition text-center">
-                            🚀 Spreman za merge
+                        <button onclick="setInspectStatus('ready')" class="py-2 px-2 rounded-lg bg-cyan-950/80 hover:bg-cyan-800 border border-cyan-700 text-cyan-300 font-semibold transition text-center text-xs">
+                            🚀 Za merge
                         </button>
                     </div>
 
                     <!-- Personal Notes Field -->
                     <div>
-                        <textarea id="inspect-notes-field" rows="2" placeholder="Unesi svoje zabilješke (npr. 'Testirano na Demon's Souls, prolazi bez greške')..."
-                                  class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"></textarea>
+                        <textarea id="inspect-notes-field" rows="2" placeholder="Unesi svoje zabilješke (npr. 'Testirano na Demon\'s Souls, prolazi bez greške')..."
+                                  class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"></textarea>
                     </div>
                 </div>
 
                 <!-- ALAT 5: Modified Files Breakdown -->
                 <div>
-                    <span class="font-bold text-slate-300 block mb-1.5">Popis izmijenjenih datoteka (<span id="inspect-files-count">0</span>):</span>
-                    <div id="inspect-files-list" class="space-y-1 font-mono text-[11px] max-h-40 overflow-y-auto pr-1"></div>
+                    <span class="font-bold text-slate-300 block mb-1">Popis izmijenjenih datoteka (<span id="inspect-files-count">0</span>):</span>
+                    <div id="inspect-files-list" class="space-y-1 font-mono text-[11px] max-h-36 overflow-y-auto pr-1"></div>
                 </div>
 
             </div>
 
             <!-- Footer -->
-            <div class="p-4 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between">
+            <div class="p-3.5 sm:p-4 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between">
                 <a id="inspect-github-link" href="#" target="_blank" class="text-cyan-400 hover:underline flex items-center gap-1 text-xs">
-                    Otvori PR na GitHubu &nearr;
+                    GitHub PR &nearr;
                 </a>
                 <div class="flex gap-2">
-                    <button onclick="unassignCurrentPR()" class="px-3.5 py-1.5 bg-rose-950/60 hover:bg-rose-900 text-rose-300 border border-rose-800/80 rounded-lg text-xs font-medium transition">
-                        Vrati u nepridijeljeno
+                    <button onclick="unassignCurrentPR()" class="px-3 py-1.5 bg-rose-950/60 hover:bg-rose-900 text-rose-300 border border-rose-800/80 rounded-lg text-xs font-medium transition">
+                        Vrati u repo
                     </button>
-                    <button onclick="saveInspectionAndClose()" class="px-5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-bold shadow-md shadow-cyan-600/30 transition">
+                    <button onclick="saveInspectionAndClose()" class="px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-bold shadow-md shadow-cyan-600/30 transition">
                         Spremi i zatvori
                     </button>
                 </div>
