@@ -1,4 +1,0 @@
-@import "tailwindcss" source(none);
-@config "./tailwind.config.cjs";
-@source "./index.html";
-@source "./app.js";
