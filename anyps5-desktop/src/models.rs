@@ -1,18 +1,90 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq, Default)]
+pub struct PrFile {
+    pub path: Option<Box<str>>,
+    pub additions: Option<i64>,
+    pub deletions: Option<i64>,
+    #[serde(rename = "changeType")]
+    pub change_type: Option<Box<str>>,
+}
+
+impl<'de> Deserialize<'de> for PrFile {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum RawFile {
+            Path(String),
+            Obj {
+                path: Option<String>,
+                additions: Option<i64>,
+                deletions: Option<i64>,
+                #[serde(rename = "changeType")]
+                change_type: Option<String>,
+            },
+            Other(serde::de::IgnoredAny),
+        }
+        Ok(match RawFile::deserialize(deserializer)? {
+            RawFile::Path(p) => Self {
+                path: Some(p.into_boxed_str()),
+                additions: None,
+                deletions: None,
+                change_type: None,
+            },
+            RawFile::Obj {
+                path,
+                additions,
+                deletions,
+                change_type,
+            } => Self {
+                path: path.map(String::into_boxed_str),
+                additions,
+                deletions,
+                change_type: change_type.map(String::into_boxed_str),
+            },
+            RawFile::Other(_) => Self::default(),
+        })
+    }
+}
+
+fn deserialize_author<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum RawAuthor {
+        Name(String),
+        Obj {
+            login: Option<String>,
+            name: Option<String>,
+        },
+        Other(serde::de::IgnoredAny),
+    }
+    Ok(match RawAuthor::deserialize(deserializer)? {
+        RawAuthor::Name(s) if !s.is_empty() => s,
+        RawAuthor::Obj { login, name } => login
+            .or(name)
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "unknown".into()),
+        _ => "unknown".into(),
+    })
+}
+
+fn default_author() -> String {
+    "unknown".into()
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PullRequest {
     pub number: u64,
     #[serde(default)]
     pub title: String,
-    #[serde(default)]
-    pub author: serde_json::Value,
+    #[serde(default = "default_author", deserialize_with = "deserialize_author")]
+    pub author: String,
     #[serde(default = "missing_churn")]
     pub additions: i64,
     #[serde(default = "missing_churn")]
     pub deletions: i64,
     #[serde(default)]
-    pub files: Vec<serde_json::Value>,
+    pub files: Vec<PrFile>,
     #[serde(default)]
     pub status: String,
     #[serde(default)]
@@ -50,34 +122,18 @@ impl PullRequest {
         }
     }
 
-    pub fn author_name(&self) -> String {
-        if let Some(s) = self.author.as_str() {
-            s.to_string()
-        } else if let Some(obj) = self.author.as_object() {
-            obj.get("login")
-                .or_else(|| obj.get("name"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string()
+    pub fn author_name(&self) -> &str {
+        if self.author.is_empty() {
+            "unknown"
         } else {
-            "unknown".to_string()
+            &self.author
         }
     }
 
-    pub fn file_paths(&self) -> Vec<String> {
+    pub fn file_paths(&self) -> Vec<&str> {
         self.files
             .iter()
-            .filter_map(|f| {
-                if let Some(s) = f.as_str() {
-                    Some(s.to_string())
-                } else if let Some(obj) = f.as_object() {
-                    obj.get("path")
-                        .and_then(|p| p.as_str())
-                        .map(|s| s.to_string())
-                } else {
-                    None
-                }
-            })
+            .filter_map(|f| f.path.as_deref())
             .collect()
     }
 

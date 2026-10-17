@@ -1,9 +1,17 @@
 use serde::Deserialize;
 use std::{
     process::{Command, Stdio},
+    sync::LazyLock,
     thread,
     time::{Duration, Instant},
 };
+
+static AVATAR_AGENT: LazyLock<ureq::Agent> = LazyLock::new(|| {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(5)))
+        .build()
+        .into()
+});
 
 #[derive(Deserialize)]
 pub struct Account {
@@ -47,7 +55,7 @@ pub fn account() -> Result<(Account, Option<eframe::egui::ColorImage>), String> 
             let _ = child.wait();
             return Err("GitHub account check timed out. Retry when online.".into());
         }
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(Duration::from_millis(10));
     }
     let output = child
         .wait_with_output()
@@ -68,11 +76,7 @@ fn avatar(url: &str) -> Option<eframe::egui::ColorImage> {
     if !url.starts_with("https://avatars.githubusercontent.com/") {
         return None;
     }
-    let config = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(5)))
-        .build();
-    let agent: ureq::Agent = config.into();
-    let mut response = agent.get(url).call().ok()?;
+    let mut response = AVATAR_AGENT.get(url).call().ok()?;
     let bytes = response
         .body_mut()
         .with_config()
@@ -251,11 +255,59 @@ fn result(status: &str, conclusion: Option<&str>) -> CheckResult {
         _ => CheckResult::Unknown,
     }
 }
+
+pub fn parse_rfc3339_secs(s: &str) -> Option<i64> {
+    let s = s.trim();
+    if s.len() < 20 {
+        return None;
+    }
+    let bytes = s.as_bytes();
+    if bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || !matches!(bytes[10], b'T' | b't' | b' ')
+        || bytes[13] != b':'
+        || bytes[16] != b':'
+    {
+        return None;
+    }
+    let year: i64 = s.get(0..4)?.parse().ok()?;
+    let month: i64 = s.get(5..7)?.parse().ok()?;
+    let day: i64 = s.get(8..10)?.parse().ok()?;
+    let hour: i64 = s.get(11..13)?.parse().ok()?;
+    let min: i64 = s.get(14..16)?.parse().ok()?;
+    let sec: i64 = s.get(17..19)?.parse().ok()?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || min > 59 || sec > 60 {
+        return None;
+    }
+    let rest = s.get(19..)?;
+    let tz_start = rest.find(['Z', 'z', '+', '-'])?;
+    let tz = &rest[tz_start..];
+    let offset_secs = if tz.eq_ignore_ascii_case("Z") {
+        0
+    } else {
+        let sign = if tz.starts_with('-') { -1 } else { 1 };
+        let tz_hm = tz.get(1..)?;
+        let (th, tm) = tz_hm.split_once(':').unwrap_or((tz_hm, "0"));
+        let th: i64 = th.parse().ok()?;
+        let tm: i64 = tm.parse().ok()?;
+        sign * (th * 3600 + tm * 60)
+    };
+    let y = year - i64::from(month <= 2);
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let m = month + if month > 2 { -3 } else { 9 };
+    let doy = (153 * m + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe - 719468;
+    Some(days * 86400 + hour * 3600 + min * 60 + sec - offset_secs)
+}
+
 fn duration(start: Option<&str>, end: Option<&str>) -> String {
-    let parse =
-        |s| time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).ok();
-    if let Some((start, end)) = start.and_then(parse).zip(end.and_then(parse)) {
-        let seconds = (end - start).whole_seconds().max(0);
+    if let Some((start, end)) = start
+        .and_then(parse_rfc3339_secs)
+        .zip(end.and_then(parse_rfc3339_secs))
+    {
+        let seconds = (end - start).max(0);
         format!("{}m {:02}s", seconds / 60, seconds % 60)
     } else {
         "—".into()
@@ -298,7 +350,7 @@ fn api_summary(path: &str, query: &str) -> Result<serde_json::Value, String> {
             let _ = child.wait();
             return Err("GitHub request timed out".into());
         }
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(Duration::from_millis(10));
     }
     let output = child
         .wait_with_output()
@@ -347,26 +399,40 @@ pub fn checks(number: u64) -> Result<Checks, String> {
     let query = "{head:.head.sha,mergeable:.mergeable,state:.state,draft:.draft}";
     let pr = api_summary(&format!("{base}/pulls/{number}"), query)?;
     let head = pr["head"].as_str().ok_or("No GitHub head SHA")?.to_string();
-    let runs = pages(|page| {
-        let value = api_summary(
-            &format!("{base}/commits/{head}/check-runs?filter=latest&per_page=100&page={page}"),
-            ".check_runs|map({name,status,conclusion,html_url,started_at,completed_at})",
-        )?;
-        value
-            .as_array()
-            .cloned()
-            .ok_or("Invalid check-run page".into())
-    })?;
-    let statuses = pages(|page| {
-        let value = api_summary(
-            &format!("{base}/commits/{head}/statuses?per_page=100&page={page}"),
-            "map({context,state,target_url})",
-        )?;
-        value
-            .as_array()
-            .cloned()
-            .ok_or("Invalid status page".into())
-    })?;
+    let (runs_res, statuses_res) = thread::scope(|s| {
+        let runs_handle = s.spawn(|| {
+            pages(|page| {
+                let value = api_summary(
+                    &format!(
+                        "{base}/commits/{head}/check-runs?filter=latest&per_page=100&page={page}"
+                    ),
+                    ".check_runs|map({name,status,conclusion,html_url,started_at,completed_at})",
+                )?;
+                value
+                    .as_array()
+                    .cloned()
+                    .ok_or("Invalid check-run page".into())
+            })
+        });
+        let statuses_handle = s.spawn(|| {
+            pages(|page| {
+                let value = api_summary(
+                    &format!("{base}/commits/{head}/statuses?per_page=100&page={page}"),
+                    "map({context,state,target_url})",
+                )?;
+                value
+                    .as_array()
+                    .cloned()
+                    .ok_or("Invalid status page".into())
+            })
+        });
+        (
+            runs_handle.join().unwrap_or_else(|_| Err("Check-run thread panicked".into())),
+            statuses_handle.join().unwrap_or_else(|_| Err("Statuses thread panicked".into())),
+        )
+    });
+    let runs = runs_res?;
+    let statuses = statuses_res?;
     let mut entries: Vec<_> = runs
         .into_iter()
         .map(|run| CheckEntry {
@@ -399,29 +465,28 @@ pub fn checks(number: u64) -> Result<Checks, String> {
             source: "Commit status",
         });
     }
-    entries.sort_by_key(|e| (e.result.priority(), e.name.clone()));
+    entries.sort_by(|a, b| {
+        a.result
+            .priority()
+            .cmp(&b.result.priority())
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    let mut passed_c = 0usize;
+    let mut failed_c = 0usize;
+    let mut running_c = 0usize;
+    let mut skipped_c = 0usize;
+    let mut unknown_c = 0usize;
+    for e in &entries {
+        match e.result {
+            CheckResult::Passed => passed_c += 1,
+            CheckResult::Failed => failed_c += 1,
+            CheckResult::Running => running_c += 1,
+            CheckResult::Skipped => skipped_c += 1,
+            CheckResult::Unknown => unknown_c += 1,
+        }
+    }
     let summary = format!(
-        "{} passed · {} failed · {} running · {} skipped · {} unknown",
-        entries
-            .iter()
-            .filter(|e| e.result == CheckResult::Passed)
-            .count(),
-        entries
-            .iter()
-            .filter(|e| e.result == CheckResult::Failed)
-            .count(),
-        entries
-            .iter()
-            .filter(|e| e.result == CheckResult::Running)
-            .count(),
-        entries
-            .iter()
-            .filter(|e| e.result == CheckResult::Skipped)
-            .count(),
-        entries
-            .iter()
-            .filter(|e| e.result == CheckResult::Unknown)
-            .count()
+        "{passed_c} passed · {failed_c} failed · {running_c} running · {skipped_c} skipped · {unknown_c} unknown"
     );
     let latest = api_summary(&format!("{base}/pulls/{number}"), query)?;
     let head_changed = latest["head"].as_str() != Some(head.as_str());

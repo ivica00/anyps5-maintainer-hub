@@ -1,21 +1,58 @@
 use crate::models::SystemInfo;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
+
+pub fn initial_system_info() -> SystemInfo {
+    let cpu_cores = thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    SystemInfo {
+        os: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
+        cpu_cores,
+        has_git: true,
+        has_cmake: true,
+        has_ninja: true,
+        has_clang: true,
+    }
+}
+
+fn check_tool(bin: &str) -> bool {
+    let mut cmd = Command::new(bin);
+    cmd.arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    cmd.status().is_ok_and(|s| s.success())
+}
 
 pub fn detect_system_info() -> SystemInfo {
     let cpu_cores = thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4);
 
-    let has_git = Command::new("git").arg("--version").output().is_ok();
-    let has_cmake = Command::new("cmake").arg("--version").output().is_ok();
-    let has_ninja = Command::new("ninja").arg("--version").output().is_ok();
-    let has_clang = Command::new("clang++").arg("--version").output().is_ok();
+    let (has_git, has_cmake, has_ninja, has_clang) = thread::scope(|s| {
+        let g = s.spawn(|| check_tool("git"));
+        let c = s.spawn(|| check_tool("cmake"));
+        let n = s.spawn(|| check_tool("ninja"));
+        let l = s.spawn(|| check_tool("clang++"));
+        (
+            g.join().unwrap_or(false),
+            c.join().unwrap_or(false),
+            n.join().unwrap_or(false),
+            l.join().unwrap_or(false),
+        )
+    });
 
     SystemInfo {
         os: std::env::consts::OS.to_string(),

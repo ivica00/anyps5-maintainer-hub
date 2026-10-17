@@ -2,17 +2,24 @@ use crate::models::{Batch, PullRequest};
 use std::collections::{HashMap, HashSet};
 
 pub fn is_boilerplate_file(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    if bytes.len() >= 14 && bytes[bytes.len() - 14..].eq_ignore_ascii_case(b"cmakelists.txt") {
+        return true;
+    }
     let lower = path.to_ascii_lowercase().replace('\\', "/");
-    lower.ends_with("cmakelists.txt") || lower.contains("docs/dev/debt/")
+    lower.contains("docs/dev/debt/")
 }
 
-pub fn validate_batch(batch: &Batch, pr_map: &HashMap<u64, PullRequest>) -> Result<(), String> {
+pub fn validate_batch<'a>(
+    batch: &Batch,
+    pr_map: &'a HashMap<u64, PullRequest>,
+) -> Result<(), String> {
     if batch.pr_numbers.is_empty() {
         return Err("Batch contains no PRs.".into());
     }
     let b_type = batch.batch_type.as_str();
-    let mut numbers = HashSet::new();
-    let mut files = HashMap::new();
+    let mut numbers = HashSet::with_capacity(batch.pr_numbers.len());
+    let mut files: HashMap<&'a str, u64> = HashMap::new();
     for number in &batch.pr_numbers {
         if !numbers.insert(number) {
             return Err(format!("Duplicate PR #{number}."));
@@ -29,10 +36,10 @@ pub fn validate_batch(batch: &Batch, pr_map: &HashMap<u64, PullRequest>) -> Resu
         }
         if b_type != "cohesive_cluster" {
             for path in paths {
-                if b_type == "soft_disjoint" && is_boilerplate_file(&path) {
+                if b_type == "soft_disjoint" && is_boilerplate_file(path) {
                     continue;
                 }
-                if let Some(previous) = files.insert(path.clone(), *number)
+                if let Some(previous) = files.insert(path, *number)
                     && previous != *number
                 {
                     return Err(format!("PR #{previous} and #{number} both modify {path}."));
@@ -56,7 +63,7 @@ pub fn generate_ai_prompt(
 
     let mut total_adds: i64 = 0;
     let mut total_dels: i64 = 0;
-    let mut all_files: HashSet<String> = HashSet::new();
+    let mut all_files: HashSet<&str> = HashSet::new();
 
     for p in &prs {
         total_adds += p.additions.max(0);
@@ -71,7 +78,8 @@ pub fn generate_ai_prompt(
         .as_deref()
         .unwrap_or(&batch.complexity);
 
-    let mut p = format!("# AnyPS5 Pull Request Batch Review: {}\n\n", batch.title);
+    let mut p = String::with_capacity(2048 + prs.len() * 512);
+    p.push_str(&format!("# AnyPS5 Pull Request Batch Review: {}\n\n", batch.title));
     p.push_str("## 🎯 OBJECTIVE & ROLE\n");
     p.push_str("You are an elite principal systems software engineer, C++ architect, and PlayStation 5 emulator core contributor.\n");
     p.push_str("Your task is to conduct a rigorous, comprehensive architectural and code safety review of a **batch of pull requests with disjoint file paths in the loaded snapshot** destined for the `boykopovar/AnyPS5` repository.\n\n");
@@ -192,14 +200,16 @@ mod tests {
     #[test]
     fn overlapping_files_block_both_generators() {
         let (batch, mut prs) = fixture();
-        prs.get_mut(&2).unwrap().files = vec![json!({"path": "a.cpp"})];
+        prs.get_mut(&2).unwrap().files =
+            vec![serde_json::from_value(json!({"path": "a.cpp"})).unwrap()];
         assert!(generate_ai_prompt(&batch, &prs).is_err());
         assert!(generate_merge_script(&batch, &prs).is_err());
     }
     #[test]
     fn incomplete_files_and_duplicate_numbers_are_rejected() {
         let (mut batch, mut prs) = fixture();
-        prs.get_mut(&2).unwrap().files = vec![json!({"filename": "unknown"})];
+        prs.get_mut(&2).unwrap().files =
+            vec![serde_json::from_value(json!({"filename": "unknown"})).unwrap()];
         assert!(validate_batch(&batch, &prs).is_err());
         batch.pr_numbers = vec![1, 1];
         assert!(validate_batch(&batch, &prs).is_err());

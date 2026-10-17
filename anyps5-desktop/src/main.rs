@@ -3,6 +3,7 @@ mod models;
 mod prompt;
 mod review;
 mod supabase;
+mod sync;
 mod theme;
 mod worker;
 
@@ -14,7 +15,7 @@ use eframe::egui::{self, Color32, RichText, ScrollArea, Stroke, Vec2};
 use models::{Batch, PullRequest, SystemInfo};
 use prompt::{generate_ai_prompt, generate_merge_script};
 use theme::*;
-use worker::{CpuWorker, detect_system_info};
+use worker::{CpuWorker, detect_system_info, initial_system_info};
 
 #[allow(dead_code)]
 #[derive(PartialEq, Clone, Copy)]
@@ -31,19 +32,56 @@ enum AsyncMessage {
         prs: Vec<PullRequest>,
         warning: Option<String>,
     },
+    DeltaPrsLoaded {
+        deltas: Vec<PullRequest>,
+        open_numbers: Vec<u64>,
+        batches: Option<Vec<Batch>>,
+    },
+    HeartbeatTick(Result<supabase::HeartbeatResponse, String>),
+    SyncFinished(Result<String, String>),
     Error(String),
     DescriptionLoaded(u64, Option<String>, Result<String, String>),
     ChecksLoaded(u64, Result<github::Checks, String>),
+    #[allow(dead_code)]
     ReviewLogin(Result<review::Session, String>),
-    ReviewAction(Result<(), String>, Option<u64>),
+    ReviewAction(Result<String, String>, Option<u64>),
     LoggedOut(Result<(), String>),
     AccountLoaded(Result<(github::Account, Option<egui::ColorImage>), String>),
+    SystemInfoLoaded(SystemInfo, bool),
+}
+
+struct BatchMeta {
+    summary: String,
+    blocker: Option<String>,
+    churn: Option<i64>,
+    number: u64,
+    risk_level: &'static str,
+    risk_color: Color32,
+    title_lower: String,
+    category_lower: String,
+}
+
+#[derive(PartialEq, Default)]
+struct BatchFilterKey {
+    scope: u8,
+    sort: u8,
+    query: String,
+    category: String,
+    complexity: String,
+    login: Option<String>,
+}
+
+#[derive(PartialEq, Default)]
+struct PrFilterKey {
+    query: String,
+    newest_first: bool,
+    category: String,
+    status: String,
 }
 
 struct AnyPs5PureRustApp {
     batches: Vec<Batch>,
     prs: HashMap<u64, PullRequest>,
-    all_prs_list: Vec<PullRequest>,
     selected_batch: Option<Batch>,
     active_tab: AppTab,
     search_query: String,
@@ -72,6 +110,7 @@ struct AnyPs5PureRustApp {
     repo_status: String,
     status_message: String,
     system_info: SystemInfo,
+    runner_configured: bool,
     context: egui::Context,
     is_loading: bool,
     github_login: Option<String>,
@@ -83,6 +122,29 @@ struct AnyPs5PureRustApp {
     app_logo: Option<egui::TextureHandle>,
     use_windows_sandbox: bool,
     copied_notice: Option<(String, std::time::Instant)>,
+    batch_meta: Vec<BatchMeta>,
+    batch_categories: Vec<String>,
+    repo_categories: Vec<String>,
+    repo_statuses: Vec<String>,
+    open_prs_count: usize,
+    open_prs_label: String,
+    batches_count_label: String,
+    cache_prs_len: usize,
+    batch_filter_key: Option<BatchFilterKey>,
+    filtered_batch_indices: Vec<usize>,
+    pr_filter_key: Option<PrFilterKey>,
+    filtered_pr_numbers: Vec<u64>,
+    prompt_cache: Option<(String, String)>,
+    instance_id: String,
+    auto_sync_enabled: bool,
+    data_version: i64,
+    active_peers: usize,
+    slot_index: usize,
+    last_heartbeat: std::time::Instant,
+    heartbeat_interval: std::time::Duration,
+    last_max_updated_at: Option<String>,
+    sync_busy: bool,
+    sync_status: String,
     tx: Sender<AsyncMessage>,
     rx: Receiver<AsyncMessage>,
 }
@@ -93,12 +155,12 @@ impl AnyPs5PureRustApp {
         theme::apply_ps5_theme(&cc.egui_ctx);
 
         let (tx, rx) = channel();
-        let system_info = detect_system_info();
+        let system_info = initial_system_info();
 
         let app_logo = {
             let bytes = include_bytes!("../assets/anyps5_icon_white.png");
             if let Ok(img) = image::load_from_memory(bytes) {
-                let rgba = img.to_rgba8();
+                let rgba = img.thumbnail(64, 64).into_rgba8();
                 let (w, h) = rgba.dimensions();
                 let color_image = egui::ColorImage::from_rgba_unmultiplied(
                     [w as usize, h as usize],
@@ -117,7 +179,6 @@ impl AnyPs5PureRustApp {
         let mut app = Self {
             batches: Vec::new(),
             prs: HashMap::new(),
-            all_prs_list: Vec::new(),
             selected_batch: None,
             active_tab: AppTab::Minibatches,
             search_query: String::new(),
@@ -146,6 +207,7 @@ impl AnyPs5PureRustApp {
             repo_status: String::new(),
             status_message: "Connecting to Supabase...".to_string(),
             system_info,
+            runner_configured: false,
             context: cc.egui_ctx.clone(),
             is_loading: false,
             github_login: None,
@@ -157,15 +219,122 @@ impl AnyPs5PureRustApp {
             app_logo,
             use_windows_sandbox: false,
             copied_notice: None,
+            batch_meta: Vec::new(),
+            batch_categories: Vec::new(),
+            repo_categories: Vec::new(),
+            repo_statuses: Vec::new(),
+            open_prs_count: 0,
+            open_prs_label: "0".into(),
+            batches_count_label: "0".into(),
+            cache_prs_len: 0,
+            batch_filter_key: None,
+            filtered_batch_indices: Vec::new(),
+            pr_filter_key: None,
+            filtered_pr_numbers: Vec::new(),
+            prompt_cache: None,
+            instance_id: {
+                let pid = std::process::id();
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis();
+                format!("inst-{pid:x}-{now:x}")
+            },
+            auto_sync_enabled: true,
+            data_version: 0,
+            active_peers: 1,
+            slot_index: 0,
+            last_heartbeat: std::time::Instant::now(),
+            heartbeat_interval: std::time::Duration::from_secs(25 + ((std::process::id() % 11) as u64)),
+            last_max_updated_at: None,
+            sync_busy: false,
+            sync_status: String::new(),
             tx: tx.clone(),
             rx,
         };
+
+        // Background system info & runner credentials check (non-blocking startup)
+        {
+            let tx = tx.clone();
+            let context = cc.egui_ctx.clone();
+            thread::spawn(move || {
+                let info = detect_system_info();
+                let configured = CpuWorker::has_runner_credentials();
+                let _ = tx.send(AsyncMessage::SystemInfoLoaded(info, configured));
+                context.request_repaint();
+            });
+        }
 
         // Initial background fetch from Supabase
         app.trigger_fetch();
         app.check_github(false);
 
         app
+    }
+
+    fn ensure_data_cache(&mut self) {
+        if self.batch_meta.len() == self.batches.len() && self.cache_prs_len == self.prs.len() {
+            return;
+        }
+        self.rebuild_data_cache();
+    }
+
+    fn rebuild_data_cache(&mut self) {
+        self.batch_meta = self
+            .batches
+            .iter()
+            .map(|batch| {
+                let (mut risk_level, mut risk_color) = risk(&batch.complexity);
+                if risk_level == "Unrated"
+                    && let Some(label) = batch.complexity_label.as_deref()
+                {
+                    (risk_level, risk_color) = risk(label);
+                }
+                BatchMeta {
+                    summary: batch_summary(batch, &self.prs),
+                    blocker: batch_blocker(batch, &self.prs),
+                    churn: batch_churn(batch, &self.prs),
+                    number: batch_number(&batch.title),
+                    risk_level,
+                    risk_color,
+                    title_lower: batch.title.to_lowercase(),
+                    category_lower: batch.category.to_lowercase(),
+                }
+            })
+            .collect();
+
+        let mut b_cats: Vec<String> = self.batches.iter().map(|b| b.category.clone()).collect();
+        b_cats.sort();
+        b_cats.dedup();
+        self.batch_categories = b_cats;
+
+        let mut r_cats = Vec::new();
+        let mut r_stats = Vec::new();
+        let mut open_count = 0usize;
+        for pr in self.prs.values() {
+            if pr.is_open() {
+                open_count += 1;
+            }
+            if !pr.category.is_empty() {
+                r_cats.push(pr.category.clone());
+            }
+            if !pr.status.is_empty() {
+                r_stats.push(pr.status.clone());
+            }
+        }
+        r_cats.sort();
+        r_cats.dedup();
+        r_stats.sort();
+        r_stats.dedup();
+        self.repo_categories = r_cats;
+        self.repo_statuses = r_stats;
+        self.open_prs_count = open_count;
+        self.open_prs_label = open_count.to_string();
+        self.batches_count_label = self.batches.len().to_string();
+        self.cache_prs_len = self.prs.len();
+        self.batch_filter_key = None;
+        self.pr_filter_key = None;
+        self.prompt_cache = None;
     }
 
     fn check_github(&mut self, login: bool) {
@@ -201,8 +370,14 @@ impl AnyPs5PureRustApp {
         let tx = self.tx.clone();
         let context = self.context.clone();
         thread::spawn(move || {
-            let batches = supabase::fetch_batches();
-            let prs = supabase::fetch_prs();
+            let (batches, prs) = thread::scope(|s| {
+                let b = s.spawn(supabase::fetch_batches);
+                let p = s.spawn(supabase::fetch_prs);
+                (
+                    b.join().unwrap_or_else(|_| Err("Batches thread panicked".into())),
+                    p.join().unwrap_or_else(|_| Err("PRs thread panicked".into())),
+                )
+            });
             let message = match (batches, prs) {
                 (Ok(batches), Ok(prs)) => AsyncMessage::DataLoaded {
                     batches,
@@ -249,8 +424,8 @@ impl AnyPs5PureRustApp {
                     if let Some(warning) = warning {
                         self.status_message = warning;
                     }
-                    self.all_prs_list = prs.clone();
                     self.prs.clear();
+                    self.prs.reserve(prs.len());
                     for pr in prs {
                         self.prs.insert(pr.number, pr);
                     }
@@ -261,6 +436,14 @@ impl AnyPs5PureRustApp {
                         .or_else(|| batches.first())
                         .cloned();
                     self.batches = batches;
+                    self.rebuild_data_cache();
+                    if self.data_version == 0 {
+                        self.trigger_heartbeat();
+                    }
+                }
+                AsyncMessage::SystemInfoLoaded(info, configured) => {
+                    self.system_info = info;
+                    self.runner_configured = configured;
                 }
                 AsyncMessage::LoggedOut(result) => {
                     self.github_busy = false;
@@ -326,14 +509,103 @@ impl AnyPs5PureRustApp {
                 AsyncMessage::ReviewAction(result, saved) => {
                     self.review_busy = false;
                     match result {
-                        Ok(()) => {
+                        Ok(msg) => {
                             if let Some(number) = saved {
                                 self.drafts.remove(&number);
                             }
-                            self.review_message = "Saved to Supabase. Refreshing…".into();
+                            self.review_message = msg.clone();
+                            self.copied_notice = Some((msg, std::time::Instant::now()));
                             self.trigger_fetch();
                         }
                         Err(error) => self.review_message = error,
+                    }
+                }
+                AsyncMessage::DeltaPrsLoaded {
+                    deltas,
+                    open_numbers,
+                    batches,
+                } => {
+                    self.is_loading = false;
+                    for pr in deltas {
+                        self.prs.insert(pr.number, pr);
+                    }
+                    if !open_numbers.is_empty() {
+                        let open_set: std::collections::HashSet<u64> = open_numbers.into_iter().collect();
+                        self.prs.retain(|num, pr| pr.github_state.as_deref().unwrap_or("open") != "open" || open_set.contains(num));
+                    }
+                    if let Some(batches) = batches {
+                        let id = self.selected_batch.as_ref().map(|b| b.id.as_str());
+                        self.selected_batch = batches
+                            .iter()
+                            .find(|b| Some(b.id.as_str()) == id)
+                            .or_else(|| batches.first())
+                            .cloned();
+                        self.batches = batches;
+                    }
+                    self.status_message = format!(
+                        "Supabase Live ({} batches, {} PRs)",
+                        self.batches.len(),
+                        self.prs.len()
+                    );
+                    self.rebuild_data_cache();
+                }
+                AsyncMessage::HeartbeatTick(result) => {
+                    match result {
+                        Ok(hb) => {
+                            self.active_peers = hb.active_count;
+                            self.slot_index = hb.slot_index;
+                            if self.data_version == 0 {
+                                self.data_version = hb.data_version;
+                                self.last_max_updated_at = hb.last_synced_at.clone();
+                            } else if hb.data_version > self.data_version {
+                                self.data_version = hb.data_version;
+                                self.trigger_delta_fetch(hb.open_pr_numbers);
+                                self.last_max_updated_at = hb.last_synced_at.clone();
+                            }
+                            if self.auto_sync_enabled
+                                && !self.sync_busy
+                                && !self.is_loading
+                                && !self.prs.is_empty()
+                            {
+                                let needs_sync = hb.last_synced_at.as_deref().is_none_or(|ts| {
+                                    // If last sync > 3 mins ago
+                                    let now_utc = std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs();
+                                    let ts_sec = github::parse_rfc3339_secs(ts).unwrap_or(0).max(0) as u64;
+                                    now_utc.saturating_sub(ts_sec) >= 180
+                                });
+                                let is_leased = hb.lease_until.as_deref().is_some_and(|u| {
+                                    let now_utc = std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs();
+                                    let until_sec = github::parse_rfc3339_secs(u).unwrap_or(0).max(0) as u64;
+                                    until_sec > now_utc
+                                });
+                                if needs_sync && !is_leased {
+                                    self.trigger_sync(180);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            // Non-fatal background heartbeat error
+                            let _ = e;
+                        }
+                    }
+                }
+                AsyncMessage::SyncFinished(result) => {
+                    self.sync_busy = false;
+                    match result {
+                        Ok(msg) => {
+                            self.sync_status = msg.clone();
+                            self.copied_notice = Some((format!("🚀 {msg}"), std::time::Instant::now()));
+                            self.trigger_fetch();
+                        }
+                        Err(err) => {
+                            self.sync_status = format!("Sync error: {err}");
+                        }
                     }
                 }
                 AsyncMessage::Error(err) => {
@@ -342,6 +614,85 @@ impl AnyPs5PureRustApp {
                 }
             }
         }
+    }
+
+    fn trigger_delta_fetch(&mut self, open_numbers: Vec<u64>) {
+        let since = self.last_max_updated_at.clone().unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string());
+        let tx = self.tx.clone();
+        let context = self.context.clone();
+        thread::spawn(move || {
+            let deltas = supabase::fetch_prs_delta(&since).unwrap_or_default();
+            let batches = supabase::fetch_batches().ok();
+            let _ = tx.send(AsyncMessage::DeltaPrsLoaded {
+                deltas,
+                open_numbers,
+                batches,
+            });
+            context.request_repaint();
+        });
+    }
+
+    fn trigger_heartbeat(&mut self) {
+        self.last_heartbeat = std::time::Instant::now();
+        let inst_id = self.instance_id.clone();
+        let user_label = self.github_login.clone().unwrap_or_else(|| "maintainer".into());
+        let tx = self.tx.clone();
+        let context = self.context.clone();
+        thread::spawn(move || {
+            let res = supabase::sync_heartbeat(&inst_id, &user_label);
+            let _ = tx.send(AsyncMessage::HeartbeatTick(res));
+            context.request_repaint();
+        });
+    }
+
+    fn trigger_sync(&mut self, min_interval_secs: i64) {
+        if self.sync_busy {
+            return;
+        }
+        self.sync_busy = true;
+        self.sync_status = "Acquiring sync lease…".into();
+        let inst_id = self.instance_id.clone();
+        let user_label = self.github_login.clone().unwrap_or_else(|| "maintainer".into());
+        let tx = self.tx.clone();
+        let context = self.context.clone();
+        let prs_map = self.prs.clone();
+        let batches = self.batches.clone();
+        let slot_index = self.slot_index;
+        let active_count = self.active_peers;
+
+        thread::spawn(move || {
+            let lease_res = supabase::try_acquire_sync_lease(&inst_id, &user_label, min_interval_secs, 120);
+            match lease_res {
+                Ok(lease) => {
+                    if !lease.acquired {
+                        let reason = lease.reason.as_deref().unwrap_or("busy");
+                        let msg = if reason == "fresh" {
+                            "Sync skipped: recently synced by another instance.".to_string()
+                        } else if reason == "leased" {
+                            format!(
+                                "Sync in progress by @{} (lease active)",
+                                lease.lease_user_label.as_deref().unwrap_or("maintainer")
+                            )
+                        } else {
+                            format!("Sync lease busy ({reason})")
+                        };
+                        let _ = tx.send(AsyncMessage::SyncFinished(Ok(msg)));
+                        context.request_repaint();
+                        return;
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(AsyncMessage::SyncFinished(Err(e)));
+                    context.request_repaint();
+                    return;
+                }
+            }
+
+            let sync_result = sync::run_full_sync(&prs_map, &batches, slot_index, active_count);
+            let _ = supabase::finish_sync_lease(&inst_id);
+            let _ = tx.send(AsyncMessage::SyncFinished(sync_result));
+            context.request_repaint();
+        });
     }
 
     fn render_window_controls(
@@ -475,6 +826,13 @@ impl AnyPs5PureRustApp {
 impl eframe::App for AnyPs5PureRustApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.check_async_messages();
+        self.ensure_data_cache();
+
+        if self.last_heartbeat.elapsed() >= self.heartbeat_interval {
+            self.trigger_heartbeat();
+        }
+        ui.ctx().request_repaint_after(std::time::Duration::from_secs(2));
+
         if let Some((_, time)) = &self.copied_notice {
             let duration = std::time::Duration::from_secs(4);
             if time.elapsed() >= duration {
@@ -570,14 +928,14 @@ impl eframe::App for AnyPs5PureRustApp {
                                         AppTab::Minibatches,
                                         "▦",
                                         "Minibatches",
-                                        self.batches.len().to_string(),
+                                        self.batches_count_label.as_str(),
                                     ),
-                                    (AppTab::BatchInspector, "≡", "AI Inspector", String::new()),
+                                    (AppTab::BatchInspector, "≡", "AI Inspector", ""),
                                     (
                                         AppTab::EntireRepo,
                                         "◎",
                                         "Pull Requests",
-                                        self.all_prs_list.iter().filter(|p| p.is_open()).count().to_string(),
+                                        self.open_prs_label.as_str(),
                                     ),
                                 ] {
                                     let active = self.active_tab == tab;
@@ -1031,6 +1389,7 @@ fn pr_card(ui: &mut egui::Ui, pr: &PullRequest) {
 
 impl AnyPs5PureRustApp {
     fn render_minibatches_view(&mut self, ui: &mut egui::Ui) {
+        self.ensure_data_cache();
         ui.horizontal(|ui| {
             ui.label(RichText::new("Minibatches").size(28.0));
             ui.label(
@@ -1045,9 +1404,6 @@ impl AnyPs5PureRustApp {
             }
         });
         ui.add_space(8.0);
-        let mut categories: Vec<_> = self.batches.iter().map(|b| b.category.clone()).collect();
-        categories.sort();
-        categories.dedup();
         ui.horizontal_wrapped(|ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut self.batch_query)
@@ -1062,8 +1418,12 @@ impl AnyPs5PureRustApp {
                 })
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut self.category_filter, String::new(), "All categories");
-                    for category in categories {
-                        ui.selectable_value(&mut self.category_filter, category.clone(), category);
+                    for category in &self.batch_categories {
+                        ui.selectable_value(
+                            &mut self.category_filter,
+                            category.clone(),
+                            category.as_str(),
+                        );
                     }
                 });
             egui::ComboBox::from_id_salt("batch_risk")
@@ -1101,87 +1461,191 @@ impl AnyPs5PureRustApp {
                 });
         });
         ui.add_space(12.0);
-        let query = self.batch_query.to_lowercase();
-        let mut batches: Vec<_> = self
-            .batches
-            .iter()
-            .filter(|batch| {
-                let level = risk(
-                    batch
-                        .complexity_label
-                        .as_deref()
-                        .unwrap_or(&batch.complexity),
-                )
-                .0;
-                (match self.batch_scope {
-                    1 => batch.available(),
-                    2 => self.github_login.as_deref().zip(batch.owner()).is_some_and(
-                        |(login, owner)| login.eq_ignore_ascii_case(owner.trim_start_matches('@')),
-                    ),
-                    3 => batch_blocker(batch, &self.prs).is_some(),
-                    _ => true,
-                }) && (self.category_filter.is_empty() || batch.category == self.category_filter)
-                    && (self.complexity_filter.is_empty() || level == self.complexity_filter)
-                    && (query.is_empty()
-                        || batch.title.to_lowercase().contains(&query)
-                        || batch.category.to_lowercase().contains(&query)
-                        || batch
-                            .pr_numbers
-                            .iter()
-                            .any(|n| n.to_string().contains(&query)))
-            })
-            .collect();
-        match self.batch_sort {
-            3 => batches.sort_by_key(|b| (!b.available(), batch_number(&b.title), b.id.clone())),
-            4 => batches.sort_by_key(|b| batch_churn(b, &self.prs).unwrap_or(i64::MAX)),
-            5 => batches.sort_by_key(|b| (b.claimed_at.is_none(), b.claimed_at.clone())),
-            1 => batches.sort_by_key(|b| std::cmp::Reverse(b.pr_numbers.len())),
-            2 => batches.sort_by_key(|b| {
-                match risk(b.complexity_label.as_deref().unwrap_or(&b.complexity)).0 {
+        let key_changed = self.batch_filter_key.as_ref().is_none_or(|k| {
+            k.scope != self.batch_scope
+                || k.sort != self.batch_sort
+                || k.query != self.batch_query
+                || k.category != self.category_filter
+                || k.complexity != self.complexity_filter
+                || k.login != self.github_login
+        });
+        if key_changed {
+            let query = self.batch_query.to_lowercase();
+            let mut indices: Vec<usize> = (0..self.batches.len())
+                .filter(|&i| {
+                    let batch = &self.batches[i];
+                    let meta = &self.batch_meta[i];
+                    (match self.batch_scope {
+                        1 => batch.available(),
+                        2 => self.github_login.as_deref().zip(batch.owner()).is_some_and(
+                            |(login, owner)| {
+                                login.eq_ignore_ascii_case(owner.trim_start_matches('@'))
+                            },
+                        ),
+                        3 => meta.blocker.is_some(),
+                        _ => true,
+                    }) && (self.category_filter.is_empty()
+                        || batch.category == self.category_filter)
+                        && (self.complexity_filter.is_empty()
+                            || meta.risk_level == self.complexity_filter)
+                        && (query.is_empty()
+                            || meta.title_lower.contains(&query)
+                            || meta.category_lower.contains(&query)
+                            || batch
+                                .pr_numbers
+                                .iter()
+                                .any(|n| n.to_string().contains(&query)))
+                })
+                .collect();
+            match self.batch_sort {
+                3 => indices.sort_by(|&a, &b| {
+                    (!self.batches[a].available(), self.batch_meta[a].number, &self.batches[a].id)
+                        .cmp(&(
+                            !self.batches[b].available(),
+                            self.batch_meta[b].number,
+                            &self.batches[b].id,
+                        ))
+                }),
+                4 => indices.sort_by_key(|&i| self.batch_meta[i].churn.unwrap_or(i64::MAX)),
+                5 => indices.sort_by(|&a, &b| {
+                    (
+                        self.batches[a].claimed_at.is_none(),
+                        self.batches[a].claimed_at.as_deref(),
+                    )
+                        .cmp(&(
+                            self.batches[b].claimed_at.is_none(),
+                            self.batches[b].claimed_at.as_deref(),
+                        ))
+                }),
+                1 => indices.sort_by_key(|&i| std::cmp::Reverse(self.batches[i].pr_numbers.len())),
+                2 => indices.sort_by_key(|&i| match self.batch_meta[i].risk_level {
                     "Low" => 0,
                     "Medium" => 1,
                     "High" => 2,
                     _ => 3,
-                }
-            }),
-            _ => batches.sort_by_key(|b| (batch_number(&b.title), b.title.clone())),
+                }),
+                _ => indices.sort_by(|&a, &b| {
+                    (self.batch_meta[a].number, &self.batches[a].title)
+                        .cmp(&(self.batch_meta[b].number, &self.batches[b].title))
+                }),
+            }
+            self.filtered_batch_indices = indices;
+            self.batch_filter_key = Some(BatchFilterKey {
+                scope: self.batch_scope,
+                sort: self.batch_sort,
+                query: self.batch_query.clone(),
+                category: self.category_filter.clone(),
+                complexity: self.complexity_filter.clone(),
+                login: self.github_login.clone(),
+            });
         }
-        ui.label(RichText::new(format!("{} batches", batches.len())).color(COLOR_TEXT_MUTED));
+        let filtered_len = self.filtered_batch_indices.len();
+        ui.label(RichText::new(format!("{filtered_len} batches")).color(COLOR_TEXT_MUTED));
         ui.add_space(8.0);
-        if batches.is_empty() {
+        if filtered_len == 0 {
             ui.label(if self.is_loading {
                 "Loading batches…"
             } else {
                 "No matching batches. Try changing your filters."
             });
         }
-        ScrollArea::vertical().id_salt("batch_list").auto_shrink([false, false])
-            .show_rows(ui, 72.0, batches.len(), |ui, range| {
+        let mut clicked_batch = None;
+        ScrollArea::vertical()
+            .id_salt("batch_list")
+            .auto_shrink([false, false])
+            .show_rows(ui, 72.0, filtered_len, |ui, range| {
                 for index in range {
-                    let batch = batches[index];
-                    let summary = batch_summary(batch, &self.prs);
-                    let blocker = batch_blocker(batch, &self.prs);
-                    let owner = batch.owner().map(|owner| format!(" · @{owner}")).unwrap_or_default();
-                    let status = if blocker.is_some() { format!("Blocked{owner}") } else { format!("{}{owner}", batch.workflow_label()) };
-                    let (level, color) = risk(batch.complexity_label.as_deref().unwrap_or(&batch.complexity));
+                    let batch_idx = self.filtered_batch_indices[index];
+                    let batch = &self.batches[batch_idx];
+                    let meta = &self.batch_meta[batch_idx];
+                    let summary = &meta.summary;
+                    let blocker = &meta.blocker;
+                    let owner = batch
+                        .owner()
+                        .map(|owner| format!(" · @{owner}"))
+                        .unwrap_or_default();
+                    let status = if blocker.is_some() {
+                        format!("Blocked{owner}")
+                    } else {
+                        format!("{}{owner}", batch.workflow_label())
+                    };
+                    let (level, color) = (meta.risk_level, meta.risk_color);
                     let title = &batch.title;
-                    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 72.0), egui::Sense::click());
-                    ui.painter().rect_filled(rect, 10, if response.hovered() || response.has_focus() { Color32::from_rgb(28, 47, 75) } else { COLOR_CARD_BG });
+                    let (rect, response) = ui.allocate_exact_size(
+                        Vec2::new(ui.available_width(), 72.0),
+                        egui::Sense::click(),
+                    );
+                    ui.painter().rect_filled(
+                        rect,
+                        10,
+                        if response.hovered() || response.has_focus() {
+                            Color32::from_rgb(28, 47, 75)
+                        } else {
+                            COLOR_CARD_BG
+                        },
+                    );
                     let status_width = (rect.width() * 0.32).clamp(110.0, 250.0);
-                    let left = egui::Rect::from_min_max(rect.min + Vec2::new(14.0, 0.0), egui::pos2(rect.right() - status_width - 24.0, rect.bottom()));
-                    let right = egui::Rect::from_min_max(egui::pos2(rect.right() - status_width - 12.0, rect.top()), rect.max - Vec2::new(14.0, 0.0));
-                    ui.painter().with_clip_rect(left.intersect(ui.clip_rect())).text(left.left_top() + Vec2::new(0.0, 20.0), egui::Align2::LEFT_CENTER, title, egui::FontId::proportional(15.0), COLOR_TEXT_WHITE);
-                    let galley = ui.painter().layout_job(colored_batch_summary(&summary));
+                    let left = egui::Rect::from_min_max(
+                        rect.min + Vec2::new(14.0, 0.0),
+                        egui::pos2(rect.right() - status_width - 24.0, rect.bottom()),
+                    );
+                    let right = egui::Rect::from_min_max(
+                        egui::pos2(rect.right() - status_width - 12.0, rect.top()),
+                        rect.max - Vec2::new(14.0, 0.0),
+                    );
+                    ui.painter()
+                        .with_clip_rect(left.intersect(ui.clip_rect()))
+                        .text(
+                            left.left_top() + Vec2::new(0.0, 20.0),
+                            egui::Align2::LEFT_CENTER,
+                            title,
+                            egui::FontId::proportional(15.0),
+                            COLOR_TEXT_WHITE,
+                        );
+                    let galley = ui.painter().layout_job(colored_batch_summary(summary));
                     let position = left.left_top() + Vec2::new(0.0, 49.0 - galley.size().y * 0.5);
-                    ui.painter().with_clip_rect(left.intersect(ui.clip_rect())).galley(position, galley, COLOR_TEXT_MUTED);
+                    ui.painter()
+                        .with_clip_rect(left.intersect(ui.clip_rect()))
+                        .galley(position, galley, COLOR_TEXT_MUTED);
                     let painter = ui.painter().with_clip_rect(right.intersect(ui.clip_rect()));
-                    painter.text(right.right_top() + Vec2::new(0.0, 20.0), egui::Align2::RIGHT_CENTER, &status, egui::FontId::proportional(12.0), if blocker.is_some() { COLOR_WARNING } else if batch.available() { COLOR_SUCCESS } else { COLOR_TEXT_MUTED });
-                    painter.text(right.right_top() + Vec2::new(0.0, 49.0), egui::Align2::RIGHT_CENTER, format!("{level} complexity   →"), egui::FontId::proportional(12.0), color);
+                    painter.text(
+                        right.right_top() + Vec2::new(0.0, 20.0),
+                        egui::Align2::RIGHT_CENTER,
+                        &status,
+                        egui::FontId::proportional(12.0),
+                        if blocker.is_some() {
+                            COLOR_WARNING
+                        } else if batch.available() {
+                            COLOR_SUCCESS
+                        } else {
+                            COLOR_TEXT_MUTED
+                        },
+                    );
+                    painter.text(
+                        right.right_top() + Vec2::new(0.0, 49.0),
+                        egui::Align2::RIGHT_CENTER,
+                        format!("{level} complexity   →"),
+                        egui::FontId::proportional(12.0),
+                        color,
+                    );
                     focus_ring(ui, &response, 10);
-                    let tooltip = format!("{title}\n{summary}\n{status}\n{}", blocker.unwrap_or_else(|| "No local data blockers detected. Current GitHub CI and mergeability are not checked.".into()));
-                    if response.on_hover_text(tooltip).clicked() { self.selected_batch = Some(batch.clone()); self.active_tab = AppTab::BatchInspector; }
+                    let response = response.on_hover_ui(|ui| {
+                        ui.label(title);
+                        ui.label(summary);
+                        ui.label(&status);
+                        ui.label(blocker.as_deref().unwrap_or(
+                            "No local data blockers detected. Current GitHub CI and mergeability are not checked.",
+                        ));
+                    });
+                    if response.clicked() {
+                        clicked_batch = Some(batch.clone());
+                    }
                 }
             });
+        if let Some(batch) = clicked_batch {
+            self.selected_batch = Some(batch);
+            self.active_tab = AppTab::BatchInspector;
+        }
     }
 
     fn render_batch_inspector_view(&mut self, ui: &mut egui::Ui) {
@@ -1197,12 +1661,19 @@ impl AnyPs5PureRustApp {
         };
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(&batch.title).size(26.0));
-            let (level, color) = risk(
-                batch
-                    .complexity_label
-                    .as_deref()
-                    .unwrap_or(&batch.complexity),
-            );
+            let (level, color) = {
+                let (l, c) = risk(&batch.complexity);
+                if l != "Unrated" {
+                    (l, c)
+                } else {
+                    risk(
+                        batch
+                            .complexity_label
+                            .as_deref()
+                            .unwrap_or(&batch.complexity),
+                    )
+                }
+            };
             ui.colored_label(color, format!("{level} complexity"));
             ui.label(
                 RichText::new(format!(
@@ -1254,6 +1725,7 @@ impl AnyPs5PureRustApp {
         } else {
             format!("Checks fetched {fetched}/{}", batch.pr_numbers.len())
         };
+        let blocker = batch_blocker(&batch, &self.prs);
         ui.horizontal_wrapped(|ui| {
             ui.label(
                 RichText::new(format!(
@@ -1263,53 +1735,136 @@ impl AnyPs5PureRustApp {
                 .size(13.0)
                 .color(COLOR_TEXT_MUTED),
             );
-            if let Some(error) = batch_blocker(&batch, &self.prs) {
+            if let Some(error) = &blocker {
                 ui.colored_label(COLOR_WARNING, error);
             }
         });
         ui.add_space(4.0);
-        if self
-            .review_session
-            .as_ref()
-            .is_some_and(|session| session.expires <= std::time::Instant::now())
-        {
-            self.review_session = None;
-            self.review_message =
-                "Review session expired. Sign in again; drafts are retained.".into();
-        }
+        let current_user = self
+            .github_login
+            .clone()
+            .unwrap_or_else(|| "maintainer".to_string());
         ui.horizontal_wrapped(|ui| {
-            ui.add_enabled_ui(!self.review_busy, |ui| {
-                if self.review_session.is_none() {
-                    if primary(ui,"Sign in to review").on_hover_text("Connect a Supabase GitHub session for claims and saving. CLI login alone does not grant database access.").clicked() {
-                        match review::prepare_login() {
-                            Ok(login) => {
-                                ui.ctx().open_url(egui::OpenUrl::new_tab(&login.url));
-                                self.review_busy = true; self.review_cancel = Some(login.cancelled.clone()); self.review_message = "Waiting for browser sign-in…".into();
-                                let tx = self.tx.clone(); let context = self.context.clone();
-                                thread::spawn(move || { let _ = tx.send(AsyncMessage::ReviewLogin(login.finish())); context.request_repaint(); });
-                            }, Err(error) => self.review_message = error,
+            ui.add_enabled_ui(!self.review_busy && !self.is_loading, |ui| {
+                if batch.available() && blocker.is_none() {
+                    if primary(ui, "Claim batch")
+                        .on_hover_text(format!(
+                            "Claim this batch for @{current_user} and mark its PRs as in-review"
+                        ))
+                        .clicked()
+                    {
+                        let batch_id = batch.id.clone();
+                        let user = current_user.clone();
+                        let tx = self.tx.clone();
+                        let context = self.context.clone();
+                        self.review_busy = true;
+                        self.review_message = "Claiming batch…".into();
+                        thread::spawn(move || {
+                            let _ = tx.send(AsyncMessage::ReviewAction(
+                                review::claim_direct(&user, &batch_id),
+                                None,
+                            ));
+                            context.request_repaint();
+                        });
+                    }
+                } else {
+                    if primary(ui, "Release / Unblock batch")
+                        .on_hover_text(
+                            "Unclaim and unblock this batch, freeing its open PRs back to the available pool",
+                        )
+                        .clicked()
+                    {
+                        let batch_id = batch.id.clone();
+                        let tx = self.tx.clone();
+                        let context = self.context.clone();
+                        self.review_busy = true;
+                        self.review_message = "Releasing & unblocking batch…".into();
+                        thread::spawn(move || {
+                            let _ = tx.send(AsyncMessage::ReviewAction(
+                                review::release_direct(&batch_id),
+                                None,
+                            ));
+                            context.request_repaint();
+                        });
+                    }
+                    if ui
+                        .button("Complete batch")
+                        .on_hover_text(
+                            "Mark merged/closed PRs as finished, release remaining open PRs, and close this batch",
+                        )
+                        .clicked()
+                    {
+                        let batch_id = batch.id.clone();
+                        let tx = self.tx.clone();
+                        let context = self.context.clone();
+                        self.review_busy = true;
+                        self.review_message = "Completing batch…".into();
+                        thread::spawn(move || {
+                            let _ = tx.send(AsyncMessage::ReviewAction(
+                                review::complete_direct(&batch_id),
+                                None,
+                            ));
+                            context.request_repaint();
+                        });
+                    }
+                }
+            });
+            if ui.button("Refresh checks").clicked() {
+                self.request_checks(batch.pr_numbers.clone());
+            }
+            egui::ComboBox::from_id_salt("batch_tools")
+                .selected_text("More")
+                .show_ui(ui, |ui| {
+                    if ui.button("Copy review prompt").clicked() {
+                        match generate_ai_prompt(&batch, &self.prs) {
+                            Ok(text) => ui.ctx().copy_text(text),
+                            Err(error) => self.review_message = error,
                         }
                     }
-                } else if let Some(session) = &self.review_session {
-                    let owned = batch.claimed_user_id.as_deref() == Some(session.user_id.as_str());
-                    if (batch.available() || owned) && ui.button(if owned { "Release batch" } else { "Claim batch" }).clicked() {
-                        let token = session.token.clone(); let batch = batch.clone();
-                        let tx = self.tx.clone(); let context = self.context.clone(); self.review_busy = true;
-                        thread::spawn(move || { let _ = tx.send(AsyncMessage::ReviewAction(review::claim(&token, &batch, owned), None)); context.request_repaint(); });
+                    if ui.button("View AI prompt").clicked() {
+                        self.inspector_prompt = true;
                     }
-                }
-            });
-            if ui.button("Refresh checks").clicked() { self.request_checks(batch.pr_numbers.clone()); }
-            egui::ComboBox::from_id_salt("batch_tools").selected_text("More").show_ui(ui, |ui| {
-                if ui.button("Copy review prompt").clicked() {
-                    match generate_ai_prompt(&batch,&self.prs) {Ok(text)=>ui.ctx().copy_text(text),Err(error)=>self.review_message=error}
-                }
-                if ui.button("View AI prompt").clicked() { self.inspector_prompt = true; }
-                if ui.button("Copy batch ID").clicked() { ui.ctx().copy_text(batch.id.clone()); }
-                if ui.button("Copy merge script").clicked() {
-                    match generate_merge_script(&batch, &self.prs) { Ok(text) => ui.ctx().copy_text(text), Err(error) => self.review_message = error }
-                }
-            });
+                    if ui.button("Copy batch ID").clicked() {
+                        ui.ctx().copy_text(batch.id.clone());
+                    }
+                    if ui.button("Copy merge script").clicked() {
+                        match generate_merge_script(&batch, &self.prs) {
+                            Ok(text) => ui.ctx().copy_text(text),
+                            Err(error) => self.review_message = error,
+                        }
+                    }
+                    ui.separator();
+                    if ui
+                        .button(format!("Unblock all @{current_user} batches"))
+                        .clicked()
+                    {
+                        let user = current_user.clone();
+                        let tx = self.tx.clone();
+                        let context = self.context.clone();
+                        self.review_busy = true;
+                        self.review_message = format!("Unblocking all batches for @{user}…");
+                        thread::spawn(move || {
+                            let _ = tx.send(AsyncMessage::ReviewAction(
+                                review::release_all_direct(&user),
+                                None,
+                            ));
+                            context.request_repaint();
+                        });
+                    }
+                    if ui.button("Unblock ALL claimed batches").clicked() {
+                        let tx = self.tx.clone();
+                        let context = self.context.clone();
+                        self.review_busy = true;
+                        self.review_message = "Unblocking all claimed batches…".into();
+                        thread::spawn(move || {
+                            let _ = tx.send(AsyncMessage::ReviewAction(
+                                review::release_all_direct("*"),
+                                None,
+                            ));
+                            context.request_repaint();
+                        });
+                    }
+                });
         });
         if let Some(cancel) = &self.review_cancel {
             ui.horizontal(|ui| {
@@ -1335,7 +1890,21 @@ impl AnyPs5PureRustApp {
             if ui.button("← Review workspace").clicked() {
                 self.inspector_prompt = false;
             }
-            Self::prompt_panel(ui, &batch, &self.prs, &mut self.raw_prompt);
+            if self
+                .prompt_cache
+                .as_ref()
+                .is_none_or(|(id, _)| id != &batch.id)
+            {
+                let text = generate_ai_prompt(&batch, &self.prs)
+                    .unwrap_or_else(|e| format!("Review blocked: {e}"));
+                self.prompt_cache = Some((batch.id.clone(), text));
+            }
+            let cached_text = self
+                .prompt_cache
+                .as_ref()
+                .map(|(_, t)| t.as_str())
+                .unwrap_or("");
+            Self::prompt_panel(ui, cached_text, &mut self.raw_prompt);
             return;
         }
         if !self
@@ -1515,10 +2084,26 @@ impl AnyPs5PureRustApp {
         let tx = self.tx.clone();
         let context = self.context.clone();
         thread::spawn(move || {
-            for number in numbers {
-                let _ = tx.send(AsyncMessage::ChecksLoaded(number, github::checks(number)));
-                context.request_repaint();
-            }
+            let workers = numbers.len().min(4);
+            let idx = std::sync::atomic::AtomicUsize::new(0);
+            thread::scope(|s| {
+                for _ in 0..workers {
+                    let tx = tx.clone();
+                    let context = context.clone();
+                    let numbers = &numbers;
+                    let idx = &idx;
+                    s.spawn(move || {
+                        loop {
+                            let i = idx.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            let Some(&number) = numbers.get(i) else {
+                                break;
+                            };
+                            let _ = tx.send(AsyncMessage::ChecksLoaded(number, github::checks(number)));
+                            context.request_repaint();
+                        }
+                    });
+                }
+            });
         });
     }
 
@@ -1735,20 +2320,26 @@ impl AnyPs5PureRustApp {
                 1 => {
                     ui.label(format!("{} changed files", pr.files.len()));
                     for file in &pr.files {
-                        let path = file.as_str().or_else(||file["path"].as_str()).unwrap_or("Unknown path");
+                        let path = file.path.as_deref().unwrap_or("Unknown path");
                         ui.add(egui::Label::new(RichText::new(path).monospace().size(12.0)).wrap().selectable(true));
-                        if let (Some(a), Some(d)) = (file["additions"].as_i64(),file["deletions"].as_i64()) { ui.label(colored_batch_summary(&format!("{} · +{a} / −{d}", file["changeType"].as_str().unwrap_or("Changed")))); }
-                        else { ui.label(RichText::new("Per-file diff statistics unavailable").size(11.0).color(COLOR_TEXT_MUTED)); }
+                        if let (Some(a), Some(d)) = (file.additions, file.deletions) {
+                            ui.label(colored_batch_summary(&format!("{} · +{a} / −{d}", file.change_type.as_deref().unwrap_or("Changed"))));
+                        } else {
+                            ui.label(RichText::new("Per-file diff statistics unavailable").size(11.0).color(COLOR_TEXT_MUTED));
+                        }
                         ui.separator();
                     }
                     ui.hyperlink_to("View full diff on GitHub ↗", format!("https://github.com/boykopovar/AnyPS5/pull/{}/files", pr.number));
                 }
                 2 => {
-                    let can_edit = self.review_session.as_ref().is_some_and(|s| pr.assigned_user_id.as_deref() == Some(s.user_id.as_str()));
+                    let current_user = self
+                        .github_login
+                        .clone()
+                        .unwrap_or_else(|| "maintainer".to_string());
                     let draft = self.drafts.entry(pr.number).or_insert_with(|| review::Draft::new(&pr));
                     if draft.original.head_sha != pr.head_sha { ui.colored_label(COLOR_WARNING,"Head SHA changed since this draft was opened. Copy the draft, then reload it before saving."); }
                     ui.label(format!("Saved status: {} · Assigned: {}", pr.status, pr.assigned_reviewer.as_deref().unwrap_or("Unknown")));
-                    ui.add_enabled_ui(can_edit && !self.review_busy, |ui| {
+                    ui.add_enabled_ui(!self.review_busy, |ui| {
                         for (key,label) in [("build","Build checked"),("types","Types / ABI checked"),("locks","Thread safety checked"),("tests","Tests checked")] {
                             let mut checked = draft.checklist[key].as_bool().unwrap_or(false);
                             if ui.checkbox(&mut checked,label).changed() { draft.checklist[key] = serde_json::json!(checked); }
@@ -1758,13 +2349,24 @@ impl AnyPs5PureRustApp {
                         });
                         ui.add(egui::TextEdit::multiline(&mut draft.notes).desired_width(ui.available_width()).desired_rows(8).hint_text("Review findings and testing notes"));
                     });
-                    if !can_edit { ui.label("Sign in to review and claim this PR's batch to edit. Existing notes are shown below."); ui.add(egui::Label::new(draft.notes.as_str()).wrap()); }
-                    if ui.button("Copy review notes").clicked() { ui.ctx().copy_text(draft.notes.clone()); }
-                    if ui.button("Reload saved review").on_hover_text("Discard this local draft and reload the database snapshot").clicked() { *draft = review::Draft::new(&pr); }
-                    if ui.add_enabled(can_edit && !self.review_busy && draft.original.head_sha == pr.head_sha, egui::Button::new("Save review to Supabase")).clicked() && let Some(session) = &self.review_session {
-                        let draft = draft.clone(); let token = session.token.clone(); let user = session.user_id.clone(); let tx = self.tx.clone(); let context = self.context.clone(); self.review_busy = true;
-                        thread::spawn(move || { let _ = tx.send(AsyncMessage::ReviewAction(review::save(&token,&user,&draft),Some(draft.original.number))); context.request_repaint(); });
-                    }
+                    ui.horizontal(|ui| {
+                        if ui.button("Copy review notes").clicked() { ui.ctx().copy_text(draft.notes.clone()); }
+                        if ui.button("Reload saved review").on_hover_text("Discard this local draft and reload the database snapshot").clicked() { *draft = review::Draft::new(&pr); }
+                        if ui.add_enabled(!self.review_busy && draft.original.head_sha == pr.head_sha, egui::Button::new("Save review to Supabase")).clicked() {
+                            let draft = draft.clone();
+                            let user = current_user.clone();
+                            let tx = self.tx.clone();
+                            let context = self.context.clone();
+                            self.review_busy = true;
+                            thread::spawn(move || {
+                                let _ = tx.send(AsyncMessage::ReviewAction(
+                                    review::save_direct(&user, &draft),
+                                    Some(draft.original.number),
+                                ));
+                                context.request_repaint();
+                            });
+                        }
+                    });
                 }
                 _ => {
                     self.render_checks(ui, &pr);
@@ -1777,8 +2379,7 @@ impl AnyPs5PureRustApp {
 
     fn prompt_panel(
         ui: &mut egui::Ui,
-        batch: &Batch,
-        prs: &HashMap<u64, PullRequest>,
+        text: &str,
         raw: &mut bool,
     ) {
         ui.heading("Review prompt");
@@ -1787,8 +2388,6 @@ impl AnyPs5PureRustApp {
             ui.selectable_value(raw, true, "Markdown");
         });
         ui.add_space(8.0);
-        let text =
-            generate_ai_prompt(batch, prs).unwrap_or_else(|e| format!("Review blocked: {e}"));
         card().show(ui, |ui| {
             ScrollArea::vertical()
                 .id_salt("prompt_text")
@@ -1796,7 +2395,7 @@ impl AnyPs5PureRustApp {
                 .show(ui, |ui| {
                     if *raw {
                         ui.add(
-                            egui::Label::new(RichText::new(&text).monospace().size(13.0))
+                            egui::Label::new(RichText::new(text).monospace().size(13.0))
                                 .wrap()
                                 .selectable(true),
                         );
@@ -1921,6 +2520,60 @@ impl AnyPs5PureRustApp {
     }
 
     fn render_sidebar_connected_card(&mut self, ui: &mut egui::Ui) {
+        if !self.sync_status.is_empty() {
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(&self.sync_status)
+                            .size(10.0)
+                            .color(COLOR_PS5_CYAN),
+                    )
+                    .truncate(),
+                );
+            });
+            ui.add_space(2.0);
+        }
+
+        ui.horizontal(|ui| {
+            ui.checkbox(
+                &mut self.auto_sync_enabled,
+                RichText::new("Auto-Sync").size(11.0),
+            )
+            .on_hover_text(
+                "Automatically coordinates GitHub -> Supabase sync and 3-lane batch generation using distributed lease lock.",
+            );
+
+            let can_sync = !self.sync_busy && !self.is_loading;
+            if ui
+                .add_enabled(
+                    can_sync,
+                    egui::Button::new(RichText::new("⚡ Sync All").size(10.0)),
+                )
+                .on_hover_text(
+                    "Manually trigger GitHub sync and smart batch regeneration right now",
+                )
+                .clicked()
+            {
+                self.trigger_sync(0);
+            }
+        });
+        ui.add_space(4.0);
+
+        if self.active_peers > 1 {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!(
+                        "{} instances online · slot #{}",
+                        self.active_peers,
+                        self.slot_index + 1
+                    ))
+                    .size(10.0)
+                    .color(COLOR_TEXT_MUTED),
+                );
+            });
+            ui.add_space(2.0);
+        }
+
         ui.horizontal(|ui| {
             let live = self.status_message.starts_with("Supabase Live");
             ui.colored_label(
@@ -1931,21 +2584,29 @@ impl AnyPs5PureRustApp {
                 },
                 "●",
             );
-            ui.label(
-                RichText::new(if self.is_loading {
-                    "Refreshing…"
-                } else if live {
-                    "Connected"
+            let label_text = if self.sync_busy {
+                "Syncing GitHub…"
+            } else if self.is_loading {
+                "Refreshing…"
+            } else if live {
+                if self.active_peers > 1 {
+                    "Connected (Cluster)"
                 } else {
-                    "Offline"
-                })
-                .size(12.0),
-            )
-            .on_hover_text(&self.status_message);
+                    "Connected"
+                }
+            } else {
+                "Offline"
+            };
+            ui.label(RichText::new(label_text).size(12.0))
+                .on_hover_text(&self.status_message);
+
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .add_enabled(!self.is_loading, egui::Button::new("⟳").frame(false))
-                    .on_hover_text("Refresh data")
+                    .add_enabled(
+                        !self.is_loading && !self.sync_busy,
+                        egui::Button::new("⟳").frame(false),
+                    )
+                    .on_hover_text("Refresh data now")
                     .clicked()
                 {
                     self.trigger_fetch();
@@ -1957,7 +2618,7 @@ impl AnyPs5PureRustApp {
     fn render_sidebar_runner_card(&mut self, ui: &mut egui::Ui) {
         card().inner_margin(12).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            let configured = CpuWorker::has_runner_credentials();
+            let configured = self.runner_configured;
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Build Runner").size(13.0));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1983,6 +2644,7 @@ impl AnyPs5PureRustApp {
                 )
                 .clicked()
             {
+                self.runner_configured = CpuWorker::has_runner_credentials();
                 self.runner_dialog = true;
             }
             let missing: Vec<_> = [
@@ -2008,7 +2670,7 @@ impl AnyPs5PureRustApp {
         card().inner_margin(18).show(ui, |ui| {
             ui.set_min_width(ui.available_width());
 
-            let has_credentials = CpuWorker::has_runner_credentials();
+            let has_credentials = self.runner_configured;
 
             if has_credentials {
                 ui.horizontal(|ui| {
@@ -2039,6 +2701,7 @@ impl AnyPs5PureRustApp {
 
                     if ui.button(RichText::new("Reset Credentials").size(12.0).color(COLOR_TEXT_MUTED)).on_hover_text("Delete .credentials to re-register with a new token").clicked() {
                         let _ = CpuWorker::reset_runner_credentials();
+                        self.runner_configured = CpuWorker::has_runner_credentials();
                         self.copied_notice = Some(("Runner credentials reset. Please re-register.".into(), std::time::Instant::now()));
                     }
                 });
@@ -2076,6 +2739,7 @@ impl AnyPs5PureRustApp {
 
                 if btn.clicked() {
                     let res = CpuWorker::launch_runner(Some(&self.runner_token), self.use_windows_sandbox);
+                    self.runner_configured = CpuWorker::has_runner_credentials();
                     let message = match res {
                         Ok(()) => if self.use_windows_sandbox {
                             "⚡ Runner launched in Windows Sandbox!".into()
@@ -2166,6 +2830,7 @@ impl AnyPs5PureRustApp {
     }
 
     fn render_entire_repo_view(&mut self, ui: &mut egui::Ui) {
+        self.ensure_data_cache();
         heading(
             ui,
             "Pull Requests",
@@ -2189,69 +2854,79 @@ impl AnyPs5PureRustApp {
                 });
         });
         ui.horizontal_wrapped(|ui| {
-            for (id, label, values, selected) in [
-                (
-                    "repo_category",
-                    "All categories",
-                    self.all_prs_list
-                        .iter()
-                        .map(|p| p.category.clone())
-                        .collect::<Vec<_>>(),
-                    &mut self.repo_category,
-                ),
-                (
-                    "repo_status",
-                    "All statuses",
-                    self.all_prs_list
-                        .iter()
-                        .map(|p| p.status.clone())
-                        .collect::<Vec<_>>(),
-                    &mut self.repo_status,
-                ),
-            ] {
-                let mut values = values;
-                values.retain(|v| !v.is_empty());
-                values.sort();
-                values.dedup();
-                egui::ComboBox::from_id_salt(id)
-                    .selected_text(if selected.is_empty() {
-                        label
-                    } else {
-                        selected.as_str()
-                    })
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(selected, String::new(), label);
-                        for value in values {
-                            ui.selectable_value(selected, value.clone(), value);
-                        }
-                    });
-            }
+            egui::ComboBox::from_id_salt("repo_category")
+                .selected_text(if self.repo_category.is_empty() {
+                    "All categories"
+                } else {
+                    self.repo_category.as_str()
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.repo_category, String::new(), "All categories");
+                    for value in &self.repo_categories {
+                        ui.selectable_value(
+                            &mut self.repo_category,
+                            value.clone(),
+                            value.as_str(),
+                        );
+                    }
+                });
+            egui::ComboBox::from_id_salt("repo_status")
+                .selected_text(if self.repo_status.is_empty() {
+                    "All statuses"
+                } else {
+                    self.repo_status.as_str()
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.repo_status, String::new(), "All statuses");
+                    for value in &self.repo_statuses {
+                        ui.selectable_value(
+                            &mut self.repo_status,
+                            value.clone(),
+                            value.as_str(),
+                        );
+                    }
+                });
         });
         ui.add_space(12.0);
-        let filter = self.search_query.to_lowercase();
-        let open_count = self.all_prs_list.iter().filter(|p| p.is_open()).count();
-        let mut filtered: Vec<_> = self
-            .all_prs_list
-            .iter()
-            .filter(|pr| {
-                pr.is_open()
-                    && (self.repo_category.is_empty() || pr.category == self.repo_category)
-                    && (self.repo_status.is_empty() || pr.status == self.repo_status)
-                    && (filter.is_empty()
-                        || pr.title.to_lowercase().contains(&filter)
-                        || pr.author_name().to_lowercase().contains(&filter)
-                        || pr.number.to_string().contains(&filter))
-            })
-            .collect();
-        filtered.sort_by_key(|pr| pr.number);
-        if self.newest_first {
-            filtered.reverse();
+        let pr_key_changed = self.pr_filter_key.as_ref().is_none_or(|k| {
+            k.query != self.search_query
+                || k.newest_first != self.newest_first
+                || k.category != self.repo_category
+                || k.status != self.repo_status
+        });
+        if pr_key_changed {
+            let filter = self.search_query.to_lowercase();
+            let mut numbers: Vec<u64> = self
+                .prs
+                .values()
+                .filter(|pr| {
+                    pr.is_open()
+                        && (self.repo_category.is_empty() || pr.category == self.repo_category)
+                        && (self.repo_status.is_empty() || pr.status == self.repo_status)
+                        && (filter.is_empty()
+                            || pr.title.to_lowercase().contains(&filter)
+                            || pr.author_name().to_lowercase().contains(&filter)
+                            || pr.number.to_string().contains(&filter))
+                })
+                .map(|pr| pr.number)
+                .collect();
+            numbers.sort_unstable();
+            if self.newest_first {
+                numbers.reverse();
+            }
+            self.filtered_pr_numbers = numbers;
+            self.pr_filter_key = Some(PrFilterKey {
+                query: self.search_query.clone(),
+                newest_first: self.newest_first,
+                category: self.repo_category.clone(),
+                status: self.repo_status.clone(),
+            });
         }
+        let filtered_len = self.filtered_pr_numbers.len();
         ui.label(
             RichText::new(format!(
                 "{} of {} open pull requests",
-                filtered.len(),
-                open_count
+                filtered_len, self.open_prs_count
             ))
             .size(12.0)
             .color(COLOR_TEXT_MUTED),
@@ -2302,16 +2977,19 @@ impl AnyPs5PureRustApp {
             }
         });
         ui.separator();
-        if filtered.is_empty() {
+        if filtered_len == 0 {
             ui.label("No matching pull requests.");
         }
         let list_width = ui.available_width();
         ScrollArea::vertical()
             .id_salt("repo_rows")
             .auto_shrink([false, false])
-            .show_rows(ui, 42.0, filtered.len(), |ui, range| {
+            .show_rows(ui, 42.0, filtered_len, |ui, range| {
                 for index in range {
-                    let pr = filtered[index];
+                    let pr_number = self.filtered_pr_numbers[index];
+                    let Some(pr) = self.prs.get(&pr_number) else {
+                        continue;
+                    };
                     ui.push_id(pr.number, |ui| {
                         let (rect, click) = ui.allocate_exact_size(
                             Vec2::new(list_width.min(ui.available_width()), 42.0),
@@ -2328,17 +3006,14 @@ impl AnyPs5PureRustApp {
                             Color32::TRANSPARENT
                         };
                         ui.painter().rect_filled(rect, 6, fill);
+                        let num_str = format!("#{}", pr.number);
+                        let diff_str = pr.diff_summary();
                         let mut x = rect.left();
                         for (width, text, color, size) in [
-                            (
-                                number_width,
-                                format!("#{}", pr.number),
-                                COLOR_PS5_CYAN,
-                                14.0,
-                            ),
-                            (title_width, pr.title.clone(), COLOR_TEXT_WHITE, 14.0),
+                            (number_width, num_str.as_str(), COLOR_PS5_CYAN, 14.0),
+                            (title_width, pr.title.as_str(), COLOR_TEXT_WHITE, 14.0),
                             (author_width, pr.author_name(), COLOR_TEXT_MUTED, 13.0),
-                            (changes_width, pr.diff_summary(), COLOR_TEXT_MUTED, 12.0),
+                            (changes_width, diff_str.as_str(), COLOR_TEXT_MUTED, 12.0),
                         ] {
                             let cell = egui::Rect::from_min_size(
                                 egui::pos2(x, rect.top()),
@@ -2378,7 +3053,10 @@ impl AnyPs5PureRustApp {
 
 fn load_app_icon() -> Option<egui::IconData> {
     let bytes = include_bytes!("../assets/anyps5_icon.png");
-    let img = image::load_from_memory(bytes).ok()?.into_rgba8();
+    let img = image::load_from_memory(bytes)
+        .ok()?
+        .thumbnail(64, 64)
+        .into_rgba8();
     let (width, height) = img.dimensions();
     Some(egui::IconData {
         rgba: img.into_raw(),
@@ -2423,10 +3101,9 @@ mod layout_tests {
             "category": "AGC & Graphics", "complexity": "medium", "pr_numbers": [1234]
         })).unwrap();
         let (tx, rx) = channel();
-        AnyPs5PureRustApp {
+        let mut app = AnyPs5PureRustApp {
             batches: vec![batch.clone()],
-            prs: [(1234, pr.clone())].into_iter().collect(),
-            all_prs_list: vec![pr],
+            prs: [(1234, pr)].into_iter().collect(),
             selected_batch: Some(batch),
             active_tab: AppTab::Minibatches,
             search_query: String::new(),
@@ -2463,6 +3140,7 @@ mod layout_tests {
                 has_ninja: false,
                 has_clang: true,
             },
+            runner_configured: false,
             context: context.clone(),
             is_loading: false,
             github_login: None,
@@ -2474,9 +3152,34 @@ mod layout_tests {
             app_logo: None,
             use_windows_sandbox: false,
             copied_notice: None,
+            batch_meta: Vec::new(),
+            batch_categories: Vec::new(),
+            repo_categories: Vec::new(),
+            repo_statuses: Vec::new(),
+            open_prs_count: 0,
+            open_prs_label: "0".into(),
+            batches_count_label: "0".into(),
+            cache_prs_len: 0,
+            batch_filter_key: None,
+            filtered_batch_indices: Vec::new(),
+            pr_filter_key: None,
+            filtered_pr_numbers: Vec::new(),
+            prompt_cache: None,
+            instance_id: "test-instance".into(),
+            auto_sync_enabled: false,
+            data_version: 1,
+            active_peers: 1,
+            slot_index: 0,
+            last_heartbeat: std::time::Instant::now(),
+            heartbeat_interval: std::time::Duration::from_secs(60),
+            last_max_updated_at: None,
+            sync_busy: false,
+            sync_status: String::new(),
             tx,
             rx,
-        }
+        };
+        app.rebuild_data_cache();
+        app
     }
     #[test]
     fn tab_content_stays_inside_available_width() {
@@ -2524,6 +3227,48 @@ mod layout_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn sidebar_footer_preserves_navigation_scroll_height() {
+        let context = egui::Context::default();
+        theme::apply_ps5_theme(&context);
+        let mut app = fixture(&context);
+        app.active_peers = 3;
+        app.sync_status = "Synced 16 PRs, 27 batches in 4.2s".into();
+
+        let size = Vec2::new(260.0, 900.0);
+        let mut remaining_scroll_height = 0.0_f32;
+        let mut output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                ..Default::default()
+            },
+            |ui| {
+                ui.add_space(40.0);
+                ui.separator();
+                ui.add_space(12.0);
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                    ui.add_space(12.0);
+                    app.render_sidebar_connected_card(ui);
+                    ui.add_space(10.0);
+                    app.render_sidebar_runner_card(ui);
+                    ui.add_space(8.0);
+                    app.render_sidebar_profile(ui);
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+
+                    remaining_scroll_height = ui.available_height();
+                });
+            },
+        );
+        output.textures_delta.clear();
+        assert!(
+            remaining_scroll_height >= 300.0,
+            "sidebar navigation area was crushed: remaining_scroll_height = {remaining_scroll_height}"
+        );
+        assert_eq!(app.batch_meta[0].risk_level, "Medium");
     }
 }
 
