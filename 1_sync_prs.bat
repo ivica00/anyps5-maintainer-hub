@@ -1,6 +1,6 @@
 @echo off
 cd /d "%~dp0"
-title AnyPS5 - Sync Open PRs with GitHub & Supabase
+title AnyPS5 - Sync Open PRs with GitHub and Supabase
 echo ====================================================================
 echo  [1/1] Syncing Open PRs from GitHub to Supabase (Incremental SHA)...
 echo        Merged and closed PRs will be automatically cleaned up.
