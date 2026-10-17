@@ -18,3 +18,11 @@ Thumbs.db
 # Build dependencies and cache
 node_modules/
 .build-cache/
+
+# Rust build artifacts
+target/
+**/target/
+
+# Supabase CLI temp files
+supabase/.temp/
+.temp/

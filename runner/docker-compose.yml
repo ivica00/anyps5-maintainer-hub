@@ -1,0 +1,24 @@
+services:
+  anyps5-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: anyps5-builder
+    restart: unless-stopped
+    environment:
+      - REPO=boykopovar/AnyPS5
+      - RUNNER_TOKEN=${RUNNER_TOKEN}
+      - RUNNER_NAME=${RUNNER_NAME:-docker-builder-01}
+      - LABELS=self-hosted,linux,x64,anyps5-builder,docker
+      # Uncomment to enable ephemeral mode (destroys worker after 1 build)
+      # - EPHEMERAL=true
+    volumes:
+      # Optional: persistent ccache cache to accelerate C++ compilation across builds
+      - anyps5-ccache:/home/runner/.ccache
+    deploy:
+      resources:
+        limits:
+          cpus: '${RUNNER_CPUS:-0}' # 0 means unlimited (uses all host CPU cores)
+
+volumes:
+  anyps5-ccache:

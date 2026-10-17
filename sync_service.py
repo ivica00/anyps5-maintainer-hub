@@ -4,14 +4,25 @@ AnyPS5 Supabase Sync Service
 Synchronizes open, merged, and closed PRs from GitHub directly into Supabase using the service_role key.
 """
 
+import argparse
 import json
 import subprocess
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
-from backend_api import request
+from backend_api import read_all, request
 
 REPOSITORY = 'boykopovar/AnyPS5'
+
+
+def is_boilerplate_file(path):
+    p = str(path).lower().replace('\\', '/')
+    return p.endswith('cmakelists.txt') or 'docs/dev/debt/' in p
+
+
+def is_test_or_boilerplate_hotspot(path):
+    p = str(path).lower().replace('\\', '/')
+    return is_boilerplate_file(p) or '/tests/' in p or p.startswith('tests/')
 
 
 def github_pages(endpoint):
@@ -26,23 +37,51 @@ def github_pages(endpoint):
     return [row for page in pages for row in page]
 
 
-def fetch_github_prs():
+def fetch_github_prs(existing_map=None):
     # All states are explicit: never infer closure from absence in a partial list.
     pulls = github_pages(f'repos/{REPOSITORY}/pulls?state=all&per_page=100&sort=created&direction=asc')
     states = [{'number': p['number'], 'github_state':
                'merged' if p.get('merged_at') else p['state']} for p in pulls]
     open_pulls = [p for p in pulls if p['state'] == 'open']
-    print(f'Fetching complete metadata for {len(open_pulls)} open PRs...', flush=True)
-    raw = []
     by_number = {p['number']: p for p in states}
+
+    to_fetch = []
+    raw = []
+    for p in open_pulls:
+        num = p['number']
+        head_sha = (p.get('head') or {}).get('sha')
+        cached = (existing_map or {}).get(num)
+        if (cached and head_sha and cached.get('head_sha') == head_sha
+                and cached.get('github_state') == 'open'
+                and cached.get('files') and len(cached.get('files')) > 0):
+            paths = [f['path'] if isinstance(f, dict) else str(f) for f in cached['files']]
+            raw.append({
+                'number': num,
+                'title': p.get('title') or cached.get('title', ''),
+                'author': {'login': (p.get('user') or {}).get('login') or cached.get('author', 'ghost')},
+                'createdAt': p.get('created_at') or cached.get('created_at'),
+                'url': p.get('html_url') or cached.get('url'),
+                'additions': cached.get('additions', 0),
+                'deletions': cached.get('deletions', 0),
+                'files': [{'path': path} for path in paths if path],
+                'changedFiles': cached.get('file_count', len(paths)),
+                'isDraft': bool(p.get('draft', cached.get('is_draft', False))),
+                'head_sha': head_sha,
+                'mergeable_state': cached.get('mergeable_state') or 'unknown'
+            })
+        else:
+            to_fetch.append(p)
+
+    print(f'Fetching complete metadata for {len(to_fetch)} open PRs ({len(raw)} unchanged cached by SHA)...', flush=True)
     with ThreadPoolExecutor(max_workers=4) as pool:
-        for count, (pull, result) in enumerate(zip(open_pulls, pool.map(fetch_open_pr, open_pulls)), 1):
+        for count, (pull, result) in enumerate(zip(to_fetch, pool.map(fetch_open_pr, to_fetch)), 1):
             record, github_state = result
             by_number[pull['number']]['github_state'] = github_state
             if record:
                 raw.append(record)
             if count % 50 == 0:
-                print(f'Fetched {count}/{len(open_pulls)} PRs', flush=True)
+                print(f'Fetched {count}/{len(to_fetch)} PRs', flush=True)
+    raw.sort(key=lambda r: r['number'])
     return raw, states
 
 
@@ -73,7 +112,8 @@ def fetch_open_pr(p):
                 'createdAt': detail['created_at'], 'url': detail['html_url'],
                 'additions': detail['additions'], 'deletions': detail['deletions'],
                 'files': [{'path': path} for path in paths], 'changedFiles': detail['changed_files'],
-                'isDraft': detail['draft'], 'head_sha': detail['head']['sha']}
+                'isDraft': detail['draft'], 'head_sha': detail['head']['sha'],
+                'mergeable_state': detail.get('mergeable_state') or 'unknown'}
     return record, state
 
 
@@ -97,8 +137,8 @@ def classify_pr(paths, title):
         return "Documentation & Debt"
     return "Other Core Subsystems"
 
-def build_records(raw_prs):
 
+def build_records(raw_prs):
     # Hotspots
     file_freq = Counter()
     for p in raw_prs:
@@ -113,11 +153,14 @@ def build_records(raw_prs):
         dels = p.get("deletions", 0)
         tot = adds + dels
         pr_hotspots = [path for path in paths if path in hotspots]
+        core_hotspots = [path for path in pr_hotspots if not is_test_or_boilerplate_hotspot(path)]
+        code_paths = [path for path in paths if not is_boilerplate_file(path)]
+        eff_file_count = len(code_paths) if code_paths else len(paths)
         cat = classify_pr(paths, p.get("title", ""))
         
-        if len(pr_hotspots) > 0 or len(paths) > 10 or tot > 1500:
+        if len(core_hotspots) > 0 or eff_file_count > 10 or tot > 1500:
             risk = "high"
-        elif len(paths) >= 4 or tot > 300:
+        elif eff_file_count >= 4 or tot > 300 or len(pr_hotspots) > 0:
             risk = "medium"
         else:
             risk = "low"
@@ -143,18 +186,46 @@ def build_records(raw_prs):
             "size": size,
             "is_draft": p.get("isDraft", False),
             "head_sha": p["head_sha"],
-            "github_state": "open"
+            "github_state": "open",
+            "mergeable_state": p.get("mergeable_state") or "unknown"
         })
 
     return records
+
+
+def cleanup_non_open_prs():
+    batches = read_all('batches?select=id,pr_numbers')
+    claimed_prs = {n for b in batches for n in b.get('pr_numbers', [])}
+    if claimed_prs:
+        query = 'prs?github_state=in.(merged,closed)&number=not.in.(' + ','.join(map(str, claimed_prs)) + ')'
+    else:
+        query = 'prs?github_state=in.(merged,closed)'
+    request(query, method='DELETE')
 
 
 def sync():
     raw_prs, states = fetch_github_prs()
     records = build_records(raw_prs)
     request('rpc/sync_github_snapshot', {'p_records': records, 'p_states': states})
+    cleanup_non_open_prs()
     print(f'Synchronized {len(records)} open PRs and {len(states)} explicit GitHub states.')
 
 
+def sync_incremental():
+    existing = read_all('prs?select=*&order=number.asc')
+    existing_map = {p['number']: p for p in existing}
+    raw_prs, states = fetch_github_prs(existing_map=existing_map)
+    records = build_records(raw_prs)
+    request('rpc/sync_github_snapshot', {'p_records': records, 'p_states': states})
+    cleanup_non_open_prs()
+    print(f'Incremental sync completed: {len(records)} open PRs and {len(states)} explicit GitHub states.')
+
+
 if __name__ == "__main__":
-    sync()
+    parser = argparse.ArgumentParser(description="AnyPS5 GitHub to Supabase Sync Service")
+    parser.add_argument("--incremental", action="store_true", help="Reuse verified SHA-matched open PR file lists")
+    args = parser.parse_args()
+    if args.incremental:
+        sync_incremental()
+    else:
+        sync()

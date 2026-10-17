@@ -1,0 +1,14 @@
+<Configuration>
+  <VGpu>Default</VGpu>
+  <Networking>Default</Networking>
+  <MappedFolders>
+    <MappedFolder>
+      <HostFolder>%USERPROFILE%\Desktop\AnyPS5 PR\runner</HostFolder>
+      <SandboxFolder>C:\AnyPS5_Runner</SandboxFolder>
+      <ReadOnly>false</ReadOnly>
+    </MappedFolder>
+  </MappedFolders>
+  <LogonCommand>
+    <Command>powershell.exe -ExecutionPolicy Bypass -NoExit -File C:\AnyPS5_Runner\setup_windows_runner.ps1</Command>
+  </LogonCommand>
+</Configuration>

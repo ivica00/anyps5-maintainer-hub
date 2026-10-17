@@ -1,0 +1,134 @@
+name: AnyPS5 Self-Hosted C++ CI Matrix
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull Request number to build on community runners"
+        required: false
+        type: string
+      subsystem:
+        description: "Target subsystem to compile (all, relinker, register-context, write-watch)"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - all
+          - relinker
+          - register-context
+          - write-watch
+
+concurrency:
+  group: self-hosted-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================================================
+  # 1. SECURITY & ELIGIBILITY GATE
+  # Ensures community runners only execute approved or maintainer PRs.
+  # ============================================================================
+  security-gate:
+    name: "Check Build Authorization"
+    runs-on: ubuntu-latest
+    outputs:
+      authorized: ${{ steps.check.outputs.authorized }}
+    steps:
+      - name: Verify Contributor or Label Approval
+        id: check
+        run: |
+          IS_MAINTAINER="${{ contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association) }}"
+          HAS_RUN_LABEL="${{ contains(github.event.pull_request.labels.*.name, 'ci:run-build') || contains(github.event.pull_request.labels.*.name, 'safe-to-test') }}"
+          IS_DISPATCH="${{ github.event_name == 'workflow_dispatch' }}"
+          
+          if [ "$IS_MAINTAINER" = "true" ] || [ "$HAS_RUN_LABEL" = "true" ] || [ "$IS_DISPATCH" = "true" ]; then
+            echo "authorized=true" >> "$GITHUB_OUTPUT"
+            echo "✅ PR is authorized for self-hosted community runner execution."
+          else
+            echo "authorized=false" >> "$GITHUB_OUTPUT"
+            echo "⚠️ Untrusted PR: Waiting for maintainer approval (label 'ci:run-build') before dispatching to community CPU."
+          fi
+
+  # ============================================================================
+  # 2. WINDOWS SELF-HOSTED C++ BUILD (MSVC / Clang)
+  # Executes: relinker, register-context, write-watch, core
+  # ============================================================================
+  build-windows:
+    name: "Windows Community Runner (x64 MSVC/Clang)"
+    needs: security-gate
+    if: needs.security-gate.outputs.authorized == 'true'
+    runs-on: [self-hosted, windows, anyps5-builder]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Compiler & Environment
+        shell: pwsh
+        run: |
+          Write-Host "Hardware Spec: $env:NUMBER_OF_PROCESSORS logical cores detected on runner host."
+          if (Get-Command cmake -ErrorAction SilentlyContinue) {
+            Write-Host "CMake: $(cmake --version | Select-Object -First 1)"
+          }
+
+      - name: Configure CMake for Windows
+        shell: pwsh
+        run: |
+          cmake -B build -G "Ninja" `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DANYPS5_ENABLE_TESTS=ON `
+            -DANYPS5_ENABLE_WRITE_WATCH=ON
+
+      - name: Compile Core Targets (relinker, register-context, write-watch)
+        shell: pwsh
+        run: |
+          # Build individual previously skipped targets
+          cmake --build build --target relinker --parallel
+          cmake --build build --target register-context --parallel
+          cmake --build build --target write-watch --parallel
+
+      - name: Compile Full Emulator
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --parallel
+
+      - name: Run Subsystem Unit Tests
+        shell: pwsh
+        run: |
+          ctest --test-dir build --output-on-failure -C Release
+
+  # ============================================================================
+  # 3. LINUX SELF-HOSTED C++ BUILD (Clang-18 & Vulkan)
+  # Executes on Docker or Native Linux runners
+  # ============================================================================
+  build-linux:
+    name: "Linux Community Runner (Clang-18)"
+    needs: security-gate
+    if: needs.security-gate.outputs.authorized == 'true'
+    runs-on: [self-hosted, linux, anyps5-builder]
+    timeout-minutes: 35
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure CMake for Linux
+        run: |
+          cmake -B build -G "Ninja" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang-18 \
+            -DCMAKE_CXX_COMPILER=clang++-18 \
+            -DANYPS5_ENABLE_TESTS=ON
+
+      - name: Compile Targets
+        run: |
+          ninja -C build relinker register-context
+          ninja -C build
+
+      - name: Run CTest
+        run: |
+          ctest --test-dir build --output-on-failure

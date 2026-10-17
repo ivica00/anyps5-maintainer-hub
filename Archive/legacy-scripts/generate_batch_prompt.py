@@ -70,6 +70,7 @@ def build_deterministic_prompt(batch, pr_map):
     b_cat = batch.get("category", "Other Core Subsystems")
     b_tier = batch.get("complexity", "medium")
     b_tier_lbl = batch.get("complexity_label", b_tier)
+    b_type = batch.get("batch_type", "disjoint")
     pr_numbers = batch.get("pr_numbers", [])
 
     included_prs = [pr_map[num] for num in pr_numbers if num in pr_map]
@@ -88,18 +89,26 @@ def build_deterministic_prompt(batch, pr_map):
                 all_files.add(f)
     all_files.discard("")
 
+    if b_type == "cohesive_cluster":
+        overlap_policy = "🔵 **COHESIVE MODULE CLUSTER** (PRs intentionally target the same module/file; check for duplicate solutions vs. complementary changes and recommend rebase merge order)"
+    elif b_type == "soft_disjoint":
+        overlap_policy = "🟢 **CODE-DISJOINT / AUTO-REBASEABLE** (100% disjoint C++/Python source files; overlaps only in boilerplate CMakeLists.txt or docs/dev/debt/*.md)"
+    else:
+        overlap_policy = "✅ **CONFIRMED 100% DISJOINT** (PRs inside this batch do NOT share modified files, guaranteeing zero direct git conflicts)"
+
     prompt = f"""# AnyPS5 Pull Request Batch Review: {b_title}
 
 ## 🎯 OBJECTIVE & ROLE
 You are an elite principal systems software engineer, C++ architect, and PlayStation 5 emulator core contributor.
-Your task is to conduct a rigorous, comprehensive architectural and code safety review of a **conflict-free batch of pull requests** destined for the `boykopovar/AnyPS5` repository.
+Your task is to conduct a rigorous, comprehensive architectural and code safety review of a **{b_type.replace('_', ' ')} pull request batch** destined for the `boykopovar/AnyPS5` repository.
 
 ## 📦 BATCH SPECIFICATION
 - **Batch Identifier**: `{b_id}`
+- **Batch Strategy (`batch_type`)**: `{b_type}`
 - **Subsystem / Domain**: `{b_cat}`
 - **Complexity Tier**: `{b_tier_lbl}`
 - **Total Pull Requests**: {len(included_prs)}
-- **Disjoint Files Guarantee**: ✅ **CONFIRMED 100% DISJOINT** (PRs inside this batch do NOT share modified files, guaranteeing zero direct git conflicts)
+- **File Overlap Policy**: {overlap_policy}
 - **Aggregate Code Churn**: +{total_additions:,} / -{total_deletions:,} lines across {len(all_files)} files
 
 ---

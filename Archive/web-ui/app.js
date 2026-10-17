@@ -63,7 +63,18 @@ async function supabaseRequest(path, options = {}) {
         headers: { ...supabaseHeaders, ...options.headers,
             Authorization: `Bearer ${session?.access_token || SUPABASE_ANON_KEY}` }
     });
-    if (!response.ok) throw new Error(`Database request failed (${response.status}). Changes were not saved.`);
+    if (!response.ok) {
+        let detail = '';
+        if (typeof response.json === 'function') {
+            try {
+                const errBody = await response.json();
+                if (errBody && (errBody.message || errBody.details)) {
+                    detail = ` ${errBody.message || errBody.details}`;
+                }
+            } catch (_) {}
+        }
+        throw new Error(`Database request failed (${response.status}).${detail} Changes were not saved.`);
+    }
     return response;
 }
 
@@ -275,6 +286,7 @@ async function refreshDataSnapshot(showToastAlert = false) {
             state.allPRs = prData.map(row => ({
                 number: row.number,
                 githubState: row.github_state || 'unknown',
+                mergeableState: row.mergeable_state || 'unknown',
                 title: row.title,
                 author: row.author,
                 authorAvatar: row.author_avatar || `https://github.com/${row.author}.png`,
@@ -308,6 +320,7 @@ async function refreshDataSnapshot(showToastAlert = false) {
                         category: b.category,
                         complexity: b.complexity,
                         complexityLabel: b.complexity_label,
+                        batchType: b.batch_type || 'disjoint',
                         prCount: b.pr_count,
                         prNumbers: b.pr_numbers || [],
                         status: b.status || 'available',
@@ -384,15 +397,54 @@ function isOpenPR(pr) {
 }
 function getOpenPRs() { return state.allPRs.filter(isOpenPR); }
 
+function isBoilerplatePath(path) {
+    const p = String(path || '').toLowerCase().replace(/\\/g, '/');
+    return p.endsWith('cmakelists.txt') || p.includes('docs/dev/debt/');
+}
+
+function getEffectiveCodeFiles(pr) {
+    const allPaths = (pr.files || []).map(f => typeof f === 'string' ? f : (f?.path || '')).filter(Boolean);
+    const codePaths = allPaths.filter(p => !isBoilerplatePath(p));
+    return codePaths.length > 0 ? codePaths : allPaths;
+}
+
+function getBatchBlockingClaim(batch) {
+    if (!batch || batch.status !== 'available' || (batch.claimedBy && batch.claimedBy !== 'none')) return null;
+    const candidateFiles = new Set();
+    (batch.prs || []).forEach(pr => {
+        getEffectiveCodeFiles(pr).forEach(f => candidateFiles.add(f));
+    });
+    if (candidateFiles.size === 0) return null;
+
+    for (const other of (state.minibatches || [])) {
+        if (other.id === batch.id) continue;
+        const isClaimed = other.status !== 'available' || (other.claimedBy && other.claimedBy !== 'none');
+        if (!isClaimed) continue;
+        const shared = [];
+        for (const activePr of (other.prs || [])) {
+            if (activePr.githubState === 'closed' || activePr.githubState === 'merged') continue;
+            for (const f of getEffectiveCodeFiles(activePr)) {
+                if (candidateFiles.has(f)) shared.push(f);
+            }
+        }
+        if (shared.length > 0) {
+            return {
+                batchId: other.id,
+                batchTitle: other.title || other.id,
+                claimedBy: other.claimedBy || 'maintainer',
+                files: Array.from(new Set(shared))
+            };
+        }
+    }
+    return null;
+}
+
 function isBatchAvailable(batch) {
     return batch.status === 'available' && batch.claimedBy === 'none'
         && batch.prNumbers.length > 0 && batch.prs.length === batch.prNumbers.length
-        && batch.prs.every(pr => pr.githubState === 'open' && !pr.isDraft && pr.files.length > 0);
+        && batch.prs.every(pr => pr.githubState === 'open' && !pr.isDraft && pr.files.length > 0)
+        && !getBatchBlockingClaim(batch);
 }
-
-// ==========================================
-// MINIBATCH STUDIO (SERVER-SIDE LOCKING)
-// ==========================================
 
 // ==========================================
 // MINIBATCH STUDIO (SERVER-SIDE LOCKING & HIGH-DENSITY VIEW)
@@ -445,11 +497,14 @@ function toggleAllBatchesExpand() {
 function getFilteredBatches() {
     const searchTerm = (document.getElementById('batch-search-input')?.value || '').trim().toLowerCase();
     const catFilter = document.getElementById('batch-cat-filter')?.value || 'all';
+    const rawTypeFilter = document.getElementById('batch-type-filter')?.value || 'all';
+    const typeFilter = ['disjoint', 'soft_disjoint', 'cohesive_cluster'].includes(rawTypeFilter) ? rawTypeFilter : 'all';
     const tierFilter = document.getElementById('batch-tier-filter')?.value || 'all';
     const statusFilter = document.getElementById('batch-status-filter')?.value || 'available';
 
     return state.minibatches.filter(b => {
         if (catFilter !== 'all' && b.category !== catFilter) return false;
+        if (typeFilter !== 'all' && (b.batchType || 'disjoint') !== typeFilter) return false;
         if (tierFilter !== 'all' && b.complexity !== tierFilter) return false;
 
         if (statusFilter === 'available') {
@@ -458,6 +513,8 @@ function getFilteredBatches() {
             if (b.claimedBy !== state.currentMaintainer) return false;
         } else if (statusFilter === 'claimed') {
             if (!(b.claimedBy && b.claimedBy !== 'none' && b.claimedBy !== state.currentMaintainer)) return false;
+        } else if (statusFilter === 'blocked') {
+            if (!getBatchBlockingClaim(b)) return false;
         }
 
         if (searchTerm) {
@@ -466,7 +523,8 @@ function getFilteredBatches() {
             const inId = (b.id || '').toLowerCase().includes(searchTerm);
             const inPRs = (b.prNumbers || []).some(num => num.toString().includes(searchTerm));
             const inPRTitles = (b.prs || []).some(p => (p.title || '').toLowerCase().includes(searchTerm));
-            if (!inTitle && !inCat && !inId && !inPRs && !inPRTitles) return false;
+            const inFiles = (b.prs || []).some(p => (p.files || []).some(f => String(typeof f === 'string' ? f : f?.path || '').toLowerCase().includes(searchTerm)));
+            if (!inTitle && !inCat && !inId && !inPRs && !inPRTitles && !inFiles) return false;
         }
 
         return true;
@@ -530,16 +588,35 @@ function loadMoreBatches() {
     renderMinibatches();
 }
 
+function getBatchTypeBadge(batchType) {
+    if (batchType === 'cohesive_cluster') {
+        return `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-950 text-purple-300 border border-purple-800 whitespace-nowrap" title="Cohesive Module Cluster: PRs touch the exact same 1-4 target files. Review together to spot duplicates and select merge order.">🧩 Cluster</span>`;
+    } else if (batchType === 'soft_disjoint') {
+        return `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-950 text-blue-300 border border-blue-800 whitespace-nowrap" title="Soft-Disjoint (Auto-Rebaseable): C++ implementation files are 100% disjoint; only CMakeLists.txt or debt docs overlap.">🔄 Soft-Disjoint</span>`;
+    }
+    return `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-950 text-teal-300 border border-teal-800 whitespace-nowrap" title="Strict Disjoint: 0 shared files across all PRs in this batch.">⚡ Disjoint</span>`;
+}
+
+function getBatchMergeProgress(b) {
+    const prs = b.prs || [];
+    const total = prs.length || (b.prNumbers ? b.prNumbers.length : 0);
+    const merged = prs.filter(p => p.githubState === 'merged').length;
+    const closed = prs.filter(p => p.githubState === 'closed').length;
+    return { total, merged, closed, open: Math.max(0, total - merged - closed) };
+}
+
 // High-Density Compact Batch Row (Perfect for scanning 50+ batches on 1-2 screen heights)
 function renderCompactBatchRow(b) {
     const catBadge = getCategoryBadge(b.category);
+    const typeBadge = getBatchTypeBadge(b.batchType);
     const tierBadge = getComplexityBadge(b.complexity, b.prNumbers.length);
-    const selectedCount = b.selectedPRs.size;
     const totalPRs = b.prs.length || b.prNumbers.length;
     const isExpanded = state.expandedBatches.has(b.id);
 
     const isClaimedByMe = b.claimedBy === state.currentMaintainer;
     const isClaimedByOther = b.claimedBy && b.claimedBy !== 'none' && !isClaimedByMe;
+    const blockingClaim = (!isClaimedByMe && !isClaimedByOther) ? getBatchBlockingClaim(b) : null;
+    const progress = getBatchMergeProgress(b);
 
     let totalAdds = 0;
     let totalDels = 0;
@@ -553,6 +630,12 @@ function renderCompactBatchRow(b) {
         });
     });
 
+    const progressPill = progress.merged > 0 ? `
+        <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950/90 text-emerald-300 border border-emerald-700 font-mono whitespace-nowrap flex items-center gap-1" title="${progress.merged} of ${progress.total} PRs merged on GitHub">
+            <span>✅</span> ${progress.merged}/${progress.total} Merged
+        </span>
+    ` : '';
+
     const statusPill = isClaimedByOther ? `
         <span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-900 text-amber-300 border border-amber-800/80 font-mono whitespace-nowrap flex items-center gap-1">
             <span>🔒</span> @${escapeHtml(b.claimedBy)}
@@ -560,6 +643,10 @@ function renderCompactBatchRow(b) {
     ` : isClaimedByMe ? `
         <span class="text-[10px] px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 font-mono whitespace-nowrap flex items-center gap-1">
             <span>👤</span> Yours
+        </span>
+    ` : blockingClaim ? `
+        <span class="text-[10px] px-2 py-0.5 rounded-full bg-amber-950/90 text-amber-300 border border-amber-800 font-mono whitespace-nowrap flex items-center gap-1" title="Blocked on file ${escapeHtml(blockingClaim.file)} by ${escapeHtml(blockingClaim.batchTitle)} (@${escapeHtml(blockingClaim.claimedBy)})">
+            <span>⏳</span> Blocked by ${escapeHtml(blockingClaim.batchTitle)}
         </span>
     ` : `
         <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono whitespace-nowrap flex items-center gap-1">
@@ -573,9 +660,20 @@ function renderCompactBatchRow(b) {
                 🔒 Claimed
             </button>
         ` : isClaimedByMe ? `
-            <button onclick="releaseBatch('${b.id}')" 
-                    class="px-2.5 py-1 bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-800 rounded-md text-[11px] font-semibold transition cursor-pointer">
-                Release
+            <div class="flex items-center gap-1">
+                <button onclick="completeBatchServerSide('${b.id}')" 
+                        class="px-2.5 py-1 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800 rounded-md text-[11px] font-semibold transition cursor-pointer" title="Mark batch completed and release merged/closed locks">
+                    ✅ Complete
+                </button>
+                <button onclick="releaseBatch('${b.id}')" 
+                        class="px-2.5 py-1 bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-800 rounded-md text-[11px] font-semibold transition cursor-pointer">
+                    Release
+                </button>
+            </div>
+        ` : blockingClaim ? `
+            <button disabled title="File ${escapeHtml(blockingClaim.file)} is currently locked in ${escapeHtml(blockingClaim.batchTitle)}"
+                    class="px-2.5 py-1 bg-amber-950/60 text-amber-400/80 border border-amber-800/60 rounded-md text-[11px] font-semibold cursor-not-allowed">
+                ⏳ Blocked
             </button>
         ` : `
             <button onclick="claimBatchServerSide('${b.id}')" 
@@ -591,43 +689,45 @@ function renderCompactBatchRow(b) {
     `;
 
     return `
-        <div class="rounded-xl bg-cardbg border ${isClaimedByOther ? 'border-slate-800/60 opacity-80' : isClaimedByMe ? 'border-cyan-500/50 ring-1 ring-cyan-500/30' : 'border-slate-800 hover:border-slate-700'} transition shadow-sm p-2 sm:p-2.5 overflow-hidden max-w-full" id="batch-row-${b.id}">
+        <div class="rounded-xl bg-cardbg border ${isClaimedByOther ? 'border-slate-800/60 opacity-80' : isClaimedByMe ? 'border-cyan-500/50 ring-1 ring-cyan-500/30' : blockingClaim ? 'border-amber-900/50 opacity-85' : 'border-slate-800 hover:border-slate-700'} transition shadow-sm p-2 sm:p-2.5 overflow-hidden max-w-full" id="batch-row-${b.id}">
             <!-- Main Dense Horizontal Bar -->
             <div class="flex items-center justify-between gap-2 flex-wrap lg:flex-nowrap max-w-full">
-                <!-- Left: Expander, Category, Title, Complexity -->
+                <!-- Left: Expander, Category, Strategy, Title, Complexity -->
                 <div class="flex items-center gap-2 min-w-0 flex-1">
                     <button onclick="toggleBatchExpand('${b.id}')" class="p-1 rounded text-slate-400 hover:text-cyan-300 hover:bg-slate-800 transition text-[11px] flex-shrink-0 cursor-pointer" title="Show/hide individual PRs">
                         ${isExpanded ? '▼' : '▶'}
                     </button>
                     ${catBadge}
+                    ${typeBadge}
                     <span class="font-bold text-xs text-slate-100 hover:text-cyan-300 cursor-pointer truncate" onclick="toggleBatchExpand('${b.id}')" title="${escapeHtml(b.title)}">
                         ${escapeHtml(b.title)}
                     </span>
                     ${tierBadge}
                 </div>
 
-                <!-- Middle: Aggregate Diff, Disjoint Files, Clickable PR Pills -->
+                <!-- Middle: Aggregate Diff, Files, Clickable PR Pills -->
                 <div class="flex items-center gap-2 text-xs font-mono flex-wrap sm:flex-nowrap min-w-0 max-w-full">
                     <div class="text-[11px] whitespace-nowrap">
                         <span class="text-emerald-400 font-bold">+${totalAdds}</span>/<span class="text-rose-400 font-bold">-${totalDels}</span>
                     </div>
-                    <span class="text-slate-400 text-[10px] hidden md:inline px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 whitespace-nowrap" title="Disjoint files within this batch; GitHub checks still required">
+                    <span class="text-slate-400 text-[10px] hidden md:inline px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 whitespace-nowrap" title="Unique files modified across this batch">
                         📁 ${uniqueFiles.size} files
                     </span>
 
                     <!-- Clickable PR pills with hover titles (Responsive wrap) -->
                     <div class="flex items-center gap-1 flex-wrap max-w-full">
                         ${b.prs.slice(0, 4).map(pr => `
-                            <span onclick="openInspectModal(${pr.number})" title="${escapeHtml(pr.title)} (${pr.author})" class="px-1.5 py-0.5 rounded bg-slate-900/90 hover:bg-cyan-950 text-cyan-400 border border-slate-800 hover:border-cyan-700 text-[10px] font-bold cursor-pointer transition whitespace-nowrap">
-                                #${pr.number}
+                            <span onclick="openInspectModal(${pr.number})" title="${escapeHtml(pr.title)} (${pr.author}) [${pr.githubState || 'open'}]" class="px-1.5 py-0.5 rounded ${pr.githubState === 'merged' ? 'bg-emerald-950/90 text-emerald-300 border-emerald-700' : 'bg-slate-900/90 hover:bg-cyan-950 text-cyan-400 border-slate-800 hover:border-cyan-700'} border text-[10px] font-bold cursor-pointer transition whitespace-nowrap">
+                                ${pr.githubState === 'merged' ? '✓' : ''}#${pr.number}
                             </span>
                         `).join('')}
                         ${b.prs.length > 4 ? `<span class="text-[10px] text-slate-500 font-mono cursor-pointer" onclick="toggleBatchExpand('${b.id}')">+${b.prs.length - 4} more</span>` : ''}
                     </div>
                 </div>
 
-                <!-- Right: Status + 1-Click AI Prompt + CLI + Claim -->
+                <!-- Right: Progress + Status + 1-Click AI Prompt + CLI + Claim -->
                 <div class="flex items-center gap-1.5 flex-wrap sm:flex-nowrap ml-auto lg:ml-0 flex-shrink-0">
+                    ${progressPill}
                     ${statusPill}
                     
                     <!-- 1-Click Deterministic AI Prompt Copy Button -->
@@ -648,7 +748,7 @@ function renderCompactBatchRow(b) {
             ${isExpanded ? `
                 <div class="mt-2.5 pt-2 border-t border-slate-800/80 space-y-1">
                     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[11px] text-slate-400 px-1 pb-1">
-                        <span class="truncate">Pull Requests in this Batch: <strong class="text-cyan-400">${totalPRs} PRs</strong> (all PRs touch disjoint files)</span>
+                        <span class="truncate">Pull Requests in this Batch: <strong class="text-cyan-400">${totalPRs} PRs</strong> (${b.batchType === 'cohesive_cluster' ? 'cohesive cluster on shared target files' : b.batchType === 'soft_disjoint' ? 'disjoint C++ code; shared boilerplate only' : 'all PRs touch strictly disjoint files'})</span>
                         <button onclick="openBatchScriptModal('${b.id}', 'ai-prompt')" class="text-cyan-400 hover:underline flex items-center gap-1 cursor-pointer">
                             <span>🤖</span> View full AI Prompt in modal &rarr;
                         </button>
@@ -657,8 +757,9 @@ function renderCompactBatchRow(b) {
                         ${b.prs.map(pr => `
                             <div class="flex items-center justify-between p-1.5 rounded-lg bg-slate-900/80 border border-slate-800/80 text-xs hover:border-slate-700 transition">
                                 <div class="flex items-center gap-2 flex-1 min-w-0 pr-2">
-                                    <span class="w-1.5 h-1.5 rounded-full bg-cyan-400 flex-shrink-0"></span>
+                                    <span class="w-1.5 h-1.5 rounded-full ${pr.githubState === 'merged' ? 'bg-emerald-400' : pr.githubState === 'closed' ? 'bg-rose-400' : 'bg-cyan-400'} flex-shrink-0"></span>
                                     <span class="font-mono font-bold text-cyan-400 text-[11px]">#${pr.number}</span>
+                                    ${pr.githubState === 'merged' ? `<span class="text-[9px] px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono">MERGED</span>` : ''}
                                     <span class="text-[11px] text-slate-200 truncate cursor-pointer hover:text-cyan-300" onclick="openInspectModal(${pr.number})" title="${escapeHtml(pr.title)}">
                                         ${escapeHtml(pr.title)}
                                     </span>
@@ -680,34 +781,49 @@ function renderCompactBatchRow(b) {
 // Grid Card View (Alternative mode for Minibatches)
 function renderGridBatchCard(b) {
     const catBadge = getCategoryBadge(b.category);
+    const typeBadge = getBatchTypeBadge(b.batchType);
     const tierBadge = getComplexityBadge(b.complexity, b.prNumbers.length);
     const totalPRs = b.prs.length || b.prNumbers.length;
 
     const isClaimedByMe = b.claimedBy === state.currentMaintainer;
     const isClaimedByOther = b.claimedBy && b.claimedBy !== 'none' && !isClaimedByMe;
+    const blockingClaim = (!isClaimedByMe && !isClaimedByOther) ? getBatchBlockingClaim(b) : null;
+    const progress = getBatchMergeProgress(b);
 
     return `
-        <div class="p-4 rounded-xl bg-cardbg border ${isClaimedByOther ? 'border-slate-800/60 opacity-80' : isClaimedByMe ? 'border-cyan-500/50 ring-1 ring-cyan-500/30' : 'border-slate-800 hover:border-slate-700'} transition shadow-sm space-y-3 flex flex-col justify-between" id="card-${b.id}">
+        <div class="p-4 rounded-xl bg-cardbg border ${isClaimedByOther ? 'border-slate-800/60 opacity-80' : isClaimedByMe ? 'border-cyan-500/50 ring-1 ring-cyan-500/30' : blockingClaim ? 'border-amber-900/50 opacity-85' : 'border-slate-800 hover:border-slate-700'} transition shadow-sm space-y-3 flex flex-col justify-between" id="card-${b.id}">
             <div class="space-y-2">
                 <!-- Batch Card Header -->
                 <div class="flex items-center justify-between gap-2 flex-wrap">
                     <div class="flex items-center gap-1.5 flex-wrap">
                         ${catBadge}
+                        ${typeBadge}
                         ${tierBadge}
                     </div>
-                    ${isClaimedByOther ? `
-                        <span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-900 text-amber-300 border border-amber-800/80 font-mono flex items-center gap-1">
-                            <span>🔒</span> Claimed by @${escapeHtml(b.claimedBy)}
-                        </span>
-                    ` : isClaimedByMe ? `
-                        <span class="text-[10px] px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 font-mono flex items-center gap-1">
-                            <span>👤</span> Your claimed batch
-                        </span>
-                    ` : `
-                        <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono flex items-center gap-1">
-                            <span>🟢</span> Available on Supabase
-                        </span>
-                    `}
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                        ${progress.merged > 0 ? `
+                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-700 font-mono flex items-center gap-1">
+                                <span>✅</span> ${progress.merged}/${progress.total} Merged
+                            </span>
+                        ` : ''}
+                        ${isClaimedByOther ? `
+                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-900 text-amber-300 border border-amber-800/80 font-mono flex items-center gap-1">
+                                <span>🔒</span> Claimed by @${escapeHtml(b.claimedBy)}
+                            </span>
+                        ` : isClaimedByMe ? `
+                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 font-mono flex items-center gap-1">
+                                <span>👤</span> Your claimed batch
+                            </span>
+                        ` : blockingClaim ? `
+                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 font-mono flex items-center gap-1" title="File ${escapeHtml(blockingClaim.file)} locked by ${escapeHtml(blockingClaim.batchTitle)}">
+                                <span>⏳</span> Blocked by ${escapeHtml(blockingClaim.batchTitle)}
+                            </span>
+                        ` : `
+                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono flex items-center gap-1">
+                                <span>🟢</span> Available on Supabase
+                            </span>
+                        `}
+                    </div>
                 </div>
 
                 <div>
@@ -716,7 +832,11 @@ function renderGridBatchCard(b) {
                         <span class="text-xs font-mono text-cyan-400">${totalPRs} PRs</span>
                     </h3>
                     <p class="text-[11px] text-slate-400 mt-0.5">
-                        Batch contains ${totalPRs} PRs with disjoint files. No shared files within this batch; verify CI and mergeability.
+                        ${b.batchType === 'cohesive_cluster'
+                            ? `Cohesive cluster of ${totalPRs} PRs targeting the exact same module file(s). Review together to spot duplicates or complementary fixes.`
+                            : b.batchType === 'soft_disjoint'
+                            ? `Soft-disjoint batch of ${totalPRs} PRs: C++ source files are 100% disjoint; only CMakeLists.txt or debt docs overlap.`
+                            : `Batch contains ${totalPRs} PRs with strictly disjoint files. Verify CI and mergeability.`}
                     </p>
                 </div>
 
@@ -725,8 +845,9 @@ function renderGridBatchCard(b) {
                     ${b.prs.map(pr => `
                         <div class="flex items-center justify-between p-2 rounded-lg bg-slate-900/90 border border-slate-800/80 text-xs hover:border-slate-700 transition">
                             <div class="flex items-center gap-2 flex-1 min-w-0 pr-2">
-                                <span class="w-1.5 h-1.5 rounded-full bg-cyan-400 flex-shrink-0"></span>
+                                <span class="w-1.5 h-1.5 rounded-full ${pr.githubState === 'merged' ? 'bg-emerald-400' : 'bg-cyan-400'} flex-shrink-0"></span>
                                 <span class="font-mono font-bold text-cyan-400 text-[11px]">#${pr.number}</span>
+                                ${pr.githubState === 'merged' ? `<span class="text-[9px] px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono">MERGED</span>` : ''}
                                 <span class="text-[11px] text-slate-200 truncate cursor-pointer hover:text-cyan-300" onclick="openInspectModal(${pr.number})" title="${escapeHtml(pr.title)}">
                                     ${escapeHtml(pr.title)}
                                 </span>
@@ -748,9 +869,17 @@ function renderGridBatchCard(b) {
                                 🔒 Already Claimed
                             </button>
                         ` : isClaimedByMe ? `
+                            <button onclick="completeBatchServerSide('${b.id}')" 
+                                     class="px-3 py-1.5 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800 rounded-lg text-xs font-semibold transition cursor-pointer">
+                                ✅ Complete
+                            </button>
                             <button onclick="releaseBatch('${b.id}')" 
                                      class="px-3 py-1.5 bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-800 rounded-lg text-xs font-semibold transition cursor-pointer">
                                 Release batch
+                            </button>
+                        ` : blockingClaim ? `
+                            <button disabled class="px-3 py-1.5 bg-amber-950/60 text-amber-400/80 border border-amber-800/60 rounded-lg text-xs font-semibold cursor-not-allowed">
+                                ⏳ Blocked by ${escapeHtml(blockingClaim.batchTitle)}
                             </button>
                         ` : `
                             <button onclick="claimBatchServerSide('${b.id}')" 
@@ -790,6 +919,7 @@ function generateBatchAIPrompt(batchId) {
 
     const selectedNums = Array.from(batch.selectedPRs || batch.prNumbers || []);
     const prs = selectedNums.map(n => state.allPRs.find(p => p.number === n)).filter(Boolean);
+    const batchType = batch.batchType || 'disjoint';
 
     let totalAdds = 0;
     let totalDels = 0;
@@ -806,17 +936,24 @@ function generateBatchAIPrompt(batchId) {
     });
     allFiles.delete('');
 
+    const strategyGuarantee = batchType === 'cohesive_cluster'
+        ? '🧩 **COHESIVE MODULE CLUSTER** (PRs intentionally modify the exact same 1-4 target files; compare side-by-side to identify duplicates, superseding implementations, or sequential merge order)'
+        : batchType === 'soft_disjoint'
+        ? '🔄 **SOFT-DISJOINT / AUTO-REBASEABLE** (100% disjoint C++ implementation files; only boilerplate files like `CMakeLists.txt` or `docs/dev/debt/*.md` overlap)'
+        : '✅ **CONFIRMED 100% DISJOINT** (PRs inside this batch touch strictly disjoint files; verify current GitHub mergeability and CI)';
+
     let p = `# AnyPS5 Pull Request Batch Review: ${batch.title}\n\n`;
     p += `## 🎯 OBJECTIVE & ROLE\n`;
     p += `You are an elite principal systems software engineer, C++ architect, and PlayStation 5 emulator core contributor.\n`;
-    p += `Your task is to conduct a rigorous, comprehensive architectural and code safety review of a **conflict-free batch of pull requests** destined for the \`boykopovar/AnyPS5\` repository.\n\n`;
+    p += `Your task is to conduct a rigorous, comprehensive architectural and code safety review of a **${batchType} batch of pull requests** destined for the \`boykopovar/AnyPS5\` repository.\n\n`;
 
     p += `## 📦 BATCH SPECIFICATION\n`;
     p += `- **Batch Identifier**: \`${batch.id}\`\n`;
+    p += `- **Batch Strategy**: \`${batchType}\`\n`;
     p += `- **Subsystem / Domain**: \`${batch.category}\`\n`;
     p += `- **Complexity Tier**: \`${batch.complexityLabel || batch.complexity}\`\n`;
     p += `- **Total Pull Requests**: ${prs.length}\n`;
-    p += `- **Disjoint Files Guarantee**: ✅ **CONFIRMED 100% DISJOINT** (PRs inside this batch have disjoint files; verify current GitHub mergeability and CI)\n`;
+    p += `- **File Overlap Strategy**: ${strategyGuarantee}\n`;
     p += `- **Aggregate Code Churn**: +${totalAdds} / -${totalDels} lines across ${allFiles.size} unique files\n\n`;
     p += `---\n\n`;
 
@@ -829,6 +966,7 @@ function generateBatchAIPrompt(batchId) {
 
         p += `### ${idx + 1}. PR #${pr.number}: ${pr.title}\n`;
         p += `- **Author**: @${author}\n`;
+        p += `- **GitHub State**: \`${pr.githubState || 'open'}\` (Mergeable: \`${pr.mergeableState || 'unknown'}\`)\n`;
         p += `- **Direct Link**: https://github.com/boykopovar/AnyPS5/pull/${pr.number}\n`;
         p += `- **Assessed Risk Level**: \`${risk}\`${pr.riskReason ? ` (${pr.riskReason})` : ''}\n`;
         p += `- **Diff Churn**: +${pr.additions || 0} / -${pr.deletions || 0} lines (${prFiles.length} files)\n`;
@@ -854,7 +992,11 @@ function generateBatchAIPrompt(batchId) {
     p += `   - Ensure descriptor indexing bounds checks, uniform buffer alignments, and Vulkan/GCN pipeline barriers are sound.\n`;
     p += `   - Verify shader disk cache serialization does not introduce disk corruption or stale key collisions.\n\n`;
     p += `4. **Cross-PR Semantic Side-Effects**:\n`;
-    p += `   - While the files are strictly physically disjoint, verify whether any PR introduces assumptions, global state changes, or build flag dependencies that could impact neighboring modules.\n\n`;
+    if (batchType === 'cohesive_cluster') {
+        p += `   - Because this is a **Cohesive Module Cluster**, identify if any PRs are competing duplicates fixing the same bug/stub, or if they implement distinct functions in the same file that should be rebased sequentially.\n\n`;
+    } else {
+        p += `   - Verify whether any PR introduces assumptions, global state changes, or build flag dependencies that could impact neighboring modules.\n\n`;
+    }
     p += `5. **Resource Management**:\n`;
     p += `   - Verify zero memory leaks (prefer RAII, \`std::unique_ptr\`, \`std::shared_ptr\`).\n`;
     p += `   - Validate bounds checking on guest pointer offsets and packet buffers.\n\n`;
@@ -865,8 +1007,8 @@ function generateBatchAIPrompt(batchId) {
     p += `### 1. Executive Batch Summary\n`;
     p += `A concise 2-3 paragraph synthesis of the batch's architectural impact, overall stability, and risk level.\n\n`;
     p += `### 2. PR-by-PR Evaluation Table\n`;
-    p += `| PR # | Title | Risk | Verdict (Approve / Request Changes / Needs Benchmarking) | Key Notes |\n`;
-    p += `|:---:|:---|:---:|:---:|:---|n`;
+    p += `| PR # | Title | Risk | Verdict (Approve / Request Changes / Duplicate) | Key Notes |\n`;
+    p += `|:---:|:---|:---:|:---:|:---|\n`;
     prs.forEach(pr => {
         const cleanTitle = (pr.title || '').replace(/\|/g, '-').slice(0, 55);
         p += `| #${pr.number} | ${cleanTitle} | \`${(pr.riskLevel || 'low').toUpperCase()}\` | **[VERDICT]** | [1-sentence assessment] |\n`;
@@ -877,7 +1019,7 @@ function generateBatchAIPrompt(batchId) {
     p += `### 4. Sequential Merge Recommendation\n`;
     p += `Provide the optimal sequential merge order or confirmation to squash-merge with \`gh pr merge\`:\n`;
     p += `\`\`\`bash\n# Recommended Sequence\n`;
-    prs.forEach(pr => {
+    prs.filter(pr => pr.githubState !== 'merged' && pr.githubState !== 'closed').forEach(pr => {
         p += `gh pr merge ${pr.number} --repo boykopovar/AnyPS5 --auto --squash --delete-branch\n`;
     });
     p += `\`\`\`\n`;
@@ -922,6 +1064,16 @@ async function releaseBatch(batchId) {
         });
         await refreshDataFromSupabase();
         showToast('Batch released successfully.');
+    } catch (error) { showToast(error.message); }
+}
+
+async function completeBatchServerSide(batchId) {
+    try {
+        await supabaseRequest('rpc/complete_batch', {
+            method: 'POST', body: JSON.stringify({ p_batch_id: batchId })
+        });
+        await refreshDataFromSupabase();
+        showToast('Batch completed and locks reconciled!');
     } catch (error) { showToast(error.message); }
 }
 
@@ -993,25 +1145,29 @@ function switchBatchModalTab(tab) {
     const selectedNums = Array.from(batch.selectedPRs || batch.prNumbers || []);
 
     if (tab === 'ai-prompt') {
-        if (desc) desc.innerText = 'This deterministic prompt contains the full context, disjoint file lists, PS5 architectural guidelines, and review rubric. Ready to paste into Claude 3.7 Sonnet, OpenAI o3/GPT-4o, or Gemini Pro.';
+        if (desc) desc.innerText = 'This deterministic prompt contains the full context, strategy guarantees, PS5 architectural guidelines, and review rubric. Ready to paste into Claude, OpenAI o3/GPT-4o, or Gemini Pro.';
         if (hint) hint.innerHTML = '100% deterministic prompt (0 API cost) – paste into AI chat for deep batch review.';
         if (btnText) btnText.innerText = 'Copy AI Prompt';
         if (textarea) textarea.value = generateBatchAIPrompt(batch.id);
     } else if (tab === 'merge') {
-        if (desc) desc.innerText = 'This script sequentially merges all selected PRs from this batch. Verify current mergeability, approvals and CI before merging.';
+        if (desc) desc.innerText = 'This script sequentially merges all open PRs from this batch. Verify current mergeability, approvals and CI before merging.';
         if (hint) hint.innerHTML = 'Copy and run in terminal with <code class="text-slate-400 font-mono">gh</code> CLI.';
         if (btnText) btnText.innerText = 'Copy Merge Script';
 
         let script = `# AnyPS5 Minibatch CLI Merge Sequence\n`;
-        script += `# Batch: ${batch.title} (${batch.category})\n`;
-        script += `# Complexity: ${batch.complexityLabel || batch.complexity} • Disjoint files: Disjoint files; verify CI and mergeability\n`;
+        script += `# Batch: ${batch.title} (${batch.category}) • Strategy: ${batch.batchType || 'disjoint'}\n`;
+        script += `# Complexity: ${batch.complexityLabel || batch.complexity}\n`;
         script += `# Generated: ${new Date().toISOString()}\n\n`;
 
         selectedNums.forEach(num => {
             const pr = state.allPRs.find(p => p.number === num);
             const prTitle = pr ? pr.title.replace(/[\r\n]+/g, ' ') : '';
-            script += `# PR #${num}: ${prTitle}\n`;
-            script += `gh pr merge ${num} --repo boykopovar/AnyPS5 --auto --squash --delete-branch\n\n`;
+            if (pr && (pr.githubState === 'merged' || pr.githubState === 'closed')) {
+                script += `# PR #${num} (${pr.githubState.toUpperCase()} - skipped): ${prTitle}\n\n`;
+            } else {
+                script += `# PR #${num}: ${prTitle}\n`;
+                script += `gh pr merge ${num} --repo boykopovar/AnyPS5 --auto --squash --delete-branch\n\n`;
+            }
         });
         if (textarea) textarea.value = script;
     } else if (tab === 'test') {
@@ -1141,9 +1297,11 @@ function renderMyPRs() {
 
     container.innerHTML = visibleBatches.map(b => {
         const catBadge = getCategoryBadge(b.category);
+        const typeBadge = getBatchTypeBadge(b.batchType);
         const tierBadge = getComplexityBadge(b.complexity, b.prNumbers.length);
         const totalPRs = b.prs.length || b.prNumbers.length;
         const isExpanded = state.expandedBatches.has(b.id);
+        const progress = getBatchMergeProgress(b);
 
         let totalAdds = 0;
         let totalDels = 0;
@@ -1166,9 +1324,15 @@ function renderMyPRs() {
                             ${b.id.toUpperCase()}
                         </span>
                         ${catBadge}
+                        ${typeBadge}
                         ${tierBadge}
-                        <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono">
-                            📁 ${uniqueFiles.size} disjoint files (0 collisions)
+                        ${progress.merged > 0 ? `
+                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-700 font-mono">
+                                ✅ ${progress.merged}/${progress.total} Merged on GitHub
+                            </span>
+                        ` : ''}
+                        <span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-900 text-slate-300 border border-slate-800 font-mono">
+                            📁 ${uniqueFiles.size} files
                         </span>
                     </div>
                     <div class="text-xs font-mono">
@@ -1183,11 +1347,11 @@ function renderMyPRs() {
                         <span class="text-xs font-mono text-cyan-300">${totalPRs} PRs</span>
                     </h3>
                     <p class="text-xs text-slate-300 mt-1">
-                        Atomic conflict-free batch claimed and locked to your workspace. All member PRs touch separate files.
+                        Batch claimed and locked to your workspace (${progress.open} open, ${progress.merged} merged, ${progress.closed} closed).
                     </p>
                 </div>
 
-                <!-- Batch Action Tools (AI Prompt, CLI Merge, CLI Test, Release) -->
+                <!-- Batch Action Tools (AI Prompt, CLI Merge, CLI Test, Complete, Release) -->
                 <div class="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 flex items-center justify-between flex-wrap gap-2 text-xs">
                     <div class="flex items-center gap-1.5 flex-wrap">
                         <button onclick="copyBatchAIPrompt('${b.id}', event)" class="px-3 py-1.5 bg-indigo-950 hover:bg-indigo-900 active:scale-95 text-indigo-300 border border-indigo-800 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer" title="Copy deterministic prompt for Claude / GPT / Gemini">
@@ -1202,6 +1366,9 @@ function renderMyPRs() {
                     </div>
 
                     <div class="flex items-center gap-1.5">
+                        <button onclick="completeBatchServerSide('${b.id}')" class="px-3 py-1.5 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1" title="Complete batch and reconcile merged PRs">
+                            <span>✅</span> Complete Batch
+                        </button>
                         <button onclick="releaseBatch('${b.id}')" class="px-3 py-1.5 bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-800 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1">
                             <span>🔓</span> Release Batch
                         </button>
@@ -1221,8 +1388,9 @@ function renderMyPRs() {
                         ${b.prs.map(pr => `
                             <div class="flex items-center justify-between p-2 sm:p-2.5 rounded-xl bg-slate-900/80 border border-slate-800/80 hover:border-slate-700 text-xs transition">
                                 <div class="flex items-center gap-2 flex-1 min-w-0 pr-2">
-                                    <span class="w-1.5 h-1.5 rounded-full bg-cyan-400 flex-shrink-0"></span>
+                                    <span class="w-1.5 h-1.5 rounded-full ${pr.githubState === 'merged' ? 'bg-emerald-400' : 'bg-cyan-400'} flex-shrink-0"></span>
                                     <span class="font-mono font-bold text-cyan-400 text-xs">#${pr.number}</span>
+                                    ${pr.githubState === 'merged' ? `<span class="text-[9px] px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono">MERGED</span>` : ''}
                                     <span class="text-xs text-slate-200 truncate cursor-pointer hover:text-cyan-300 font-medium" onclick="openInspectModal(${pr.number})" title="${escapeHtml(pr.title)}">
                                         ${escapeHtml(pr.title)}
                                     </span>
@@ -2391,5 +2559,61 @@ function renderSidebarStats() {
             }).join('');
         }
     }
+}
+
+// ==========================================
+// ANYPS5 COMMUNITY SELF-HOSTED RUNNER HUB
+// ==========================================
+
+let activeRunnerTab = 'win';
+
+function openRunnerModal() {
+    const modal = document.getElementById('runner-modal');
+    if (modal) {
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+    }
+}
+
+function closeRunnerModal() {
+    const modal = document.getElementById('runner-modal');
+    if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+    }
+}
+
+function switchRunnerTab(tab) {
+    activeRunnerTab = tab;
+    const tabWin = document.getElementById('runner-tab-win');
+    const tabDocker = document.getElementById('runner-tab-docker');
+    const tabMgr = document.getElementById('runner-tab-mgr');
+
+    const contentWin = document.getElementById('runner-content-win');
+    const contentDocker = document.getElementById('runner-content-docker');
+    const contentMgr = document.getElementById('runner-content-mgr');
+
+    const activeClass = 'px-3 py-1.5 rounded-lg font-bold bg-cyan-950 text-cyan-300 border border-cyan-700 cursor-pointer';
+    const inactiveClass = 'px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200 border border-transparent cursor-pointer';
+
+    if (tabWin) tabWin.className = tab === 'win' ? activeClass : inactiveClass;
+    if (tabDocker) tabDocker.className = tab === 'docker' ? activeClass : inactiveClass;
+    if (tabMgr) tabMgr.className = tab === 'mgr' ? activeClass : inactiveClass;
+
+    if (contentWin) contentWin.classList.toggle('hidden', tab !== 'win');
+    if (contentDocker) contentDocker.classList.toggle('hidden', tab !== 'docker');
+    if (contentMgr) contentMgr.classList.toggle('hidden', tab !== 'mgr');
+}
+
+function copyCurrentRunnerCmd() {
+    let cmd = '';
+    if (activeRunnerTab === 'win') {
+        cmd = 'powershell -ExecutionPolicy Bypass -File .\\runner\\setup_windows_runner.ps1';
+    } else if (activeRunnerTab === 'docker') {
+        cmd = 'cd runner && docker compose up -d --build';
+    } else {
+        cmd = 'python runner/anyps5_runner_manager.py --status';
+    }
+    copyTextToClipboard(cmd, '⚡ Runner command copied to clipboard!');
 }
 

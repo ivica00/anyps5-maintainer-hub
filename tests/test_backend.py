@@ -55,10 +55,12 @@ class BackendTests(unittest.TestCase):
     def test_empty_open_set_still_reconciles_closed_states(self):
         states = [{'number': 1, 'github_state': 'merged'}]
         with patch.object(sync_service, 'fetch_github_prs', return_value=([], states)):
-            with patch.object(sync_service, 'request') as request:
-                sync_service.sync()
-                self.assertEqual(request.call_args.args, ('rpc/sync_github_snapshot',
-                    {'p_records': [], 'p_states': states}))
+            with patch.object(sync_service, 'cleanup_non_open_prs') as cleanup:
+                with patch.object(sync_service, 'request') as request:
+                    sync_service.sync()
+                    self.assertEqual(request.call_args.args, ('rpc/sync_github_snapshot',
+                        {'p_records': [], 'p_states': states}))
+                    cleanup.assert_called_once()
 
     def test_incomplete_github_files_abort(self):
         detail = {'state': 'open', 'changed_files': 2}
@@ -69,6 +71,41 @@ class BackendTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, 'Incomplete file list'):
                     sync_service.fetch_github_prs()
 
+    def test_smart_mode_cohesive_cluster_and_singleton_filtering(self):
+        rows = [
+            pr(1, ['libc/src/Math.cpp']),
+            pr(2, ['libc/src/Math.cpp']),
+            pr(3, ['libc/src/Math.cpp', 'CMakeLists.txt']),
+            pr(4, ['isolated_singleton.cpp']),
+        ]
+        batches = generator.generate_batches(rows, [], smart_mode=True)
+        self.assertEqual(len(batches), 1)
+        self.assertEqual(batches[0]['batch_type'], 'cohesive_cluster')
+        self.assertEqual(batches[0]['pr_numbers'], [1, 2, 3])
+
+    def test_smart_mode_soft_disjoint_allows_shared_boilerplate_only(self):
+        rows = [
+            pr(10, ['src/core/A.cpp', 'CMakeLists.txt', 'docs/dev/debt/DEBT.md']),
+            pr(11, ['src/core/B.cpp', 'CMakeLists.txt', 'docs/dev/debt/DEBT.md']),
+        ]
+        batches = generator.generate_batches(rows, [], smart_mode=True)
+        self.assertEqual(len(batches), 1)
+        self.assertEqual(batches[0]['batch_type'], 'soft_disjoint')
+        self.assertEqual(batches[0]['pr_numbers'], [10, 11])
+
+    def test_smart_mode_excludes_files_locked_by_active_claimed_open_prs(self):
+        rows = [
+            pr(1, ['locked.cpp'], github_state='open', status='in-review'),
+            pr(2, ['locked.cpp']),
+            pr(3, ['locked.cpp']),
+            pr(4, ['free_a.cpp']),
+            pr(5, ['free_b.cpp']),
+        ]
+        existing = [{'id': 'claimed-1', 'status': 'claimed', 'claimed_by': 'owner', 'pr_numbers': [1]}]
+        batches = generator.generate_batches(rows, existing, smart_mode=True)
+        self.assertEqual([b['pr_numbers'] for b in batches], [[4, 5]])
+
 
 if __name__ == '__main__':
     unittest.main()
+

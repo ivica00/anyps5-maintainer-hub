@@ -72,6 +72,13 @@
                         <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
                         <span id="supabase-status-text">Supabase Live</span>
                     </button>
+
+                    <!-- Self-Hosted Runner Hub Button -->
+                    <button onclick="openRunnerModal()" title="Lend your CPU or check Self-Hosted Runner status"
+                            id="runner-status-pill" class="text-[10px] px-2.5 py-1 rounded-full bg-slate-900/90 text-cyan-300 border border-blue-900/60 font-mono flex items-center gap-1.5 hover:border-cyan-400 transition cursor-pointer shadow-sm">
+                        <span class="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+                        <span>⚡ Community Runner</span>
+                    </button>
                 </div>
 
                 <!-- Maintainer Selector & Tab Switcher (Fully Responsive, Anchored to Right) -->
@@ -236,14 +243,25 @@
                         </select>
                     </div>
 
+                    <!-- Strategy Filter -->
+                    <div class="flex items-center gap-1">
+                        <span class="text-slate-400">Strategy:</span>
+                        <select id="batch-type-filter" onchange="renderMinibatches()" class="bg-slate-900 border border-slate-700 text-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-cyan-500 text-xs cursor-pointer">
+                            <option value="all">All Strategies</option>
+                            <option value="disjoint">✅ Strict Disjoint</option>
+                            <option value="soft_disjoint">🟢 Auto-Rebase (CMake/Debt)</option>
+                            <option value="cohesive_cluster">🔵 Module Cluster (Same File)</option>
+                        </select>
+                    </div>
+
                     <!-- Complexity Filter -->
                     <div class="flex items-center gap-1">
                         <span class="text-slate-400">Complexity:</span>
                         <select id="batch-tier-filter" onchange="renderMinibatches()" class="bg-slate-900 border border-slate-700 text-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-cyan-500 text-xs cursor-pointer">
                             <option value="all">All Complexities</option>
-                            <option value="low">🟢 Easy (7-10 PRs)</option>
-                            <option value="medium">🟡 Medium (4-6 PRs)</option>
-                            <option value="high">🔴 Complex (1-2 PRs)</option>
+                            <option value="low">🟢 Easy (up to 10 PRs)</option>
+                            <option value="medium">🟡 Medium (up to 6 PRs)</option>
+                            <option value="high">🔴 Complex (2-3 PRs)</option>
                         </select>
                     </div>
 
@@ -255,6 +273,7 @@
                             <option value="available" selected>🟢 Available Only</option>
                             <option value="mine">👤 Claimed by Me</option>
                             <option value="claimed">🔒 Claimed by Others</option>
+                            <option value="blocked">⏳ Blocked by Active Claim</option>
                         </select>
                     </div>
 
@@ -880,6 +899,106 @@
                         Continue
                     </button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Community Self-Hosted Runner Modal -->
+    <div id="runner-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-3 sm:p-4">
+        <div class="bg-cardbg border border-slate-700 rounded-2xl max-w-2xl w-full p-5 sm:p-6 shadow-2xl space-y-4">
+            <!-- Modal Header -->
+            <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-blue-700 to-cyan-400 flex items-center justify-center text-white font-bold text-sm shadow-md">
+                        ⚡
+                    </div>
+                    <div>
+                        <h3 class="text-base font-bold text-white tracking-tight flex items-center gap-2">
+                            <span>AnyPS5 Community Runner Hub</span>
+                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 font-mono">Self-Hosted CI</span>
+                        </h3>
+                        <p class="text-xs text-slate-400">Lend your CPU to compile C++ code and execute skipped GitHub Actions checks</p>
+                    </div>
+                </div>
+                <button onclick="closeRunnerModal()" class="text-slate-400 hover:text-white transition p-1 text-lg leading-none cursor-pointer">&times;</button>
+            </div>
+
+            <!-- Modal Body -->
+            <div class="space-y-3.5 text-xs">
+                <!-- What gets built -->
+                <div class="p-3 rounded-xl bg-slate-900/90 border border-slate-800 space-y-1.5">
+                    <div class="font-semibold text-slate-200 flex items-center gap-1.5">
+                        <span class="text-cyan-400">🎯</span>
+                        <span>Resolves Skipped CI Checks:</span>
+                    </div>
+                    <div class="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-[11px] font-mono text-slate-300">
+                        <span class="px-2 py-1 rounded bg-slate-950 border border-slate-800">✓ Build / windows</span>
+                        <span class="px-2 py-1 rounded bg-slate-950 border border-slate-800">✓ Build / linux</span>
+                        <span class="px-2 py-1 rounded bg-slate-950 border border-slate-800">✓ relinker</span>
+                        <span class="px-2 py-1 rounded bg-slate-950 border border-slate-800">✓ register-context</span>
+                        <span class="px-2 py-1 rounded bg-slate-950 border border-slate-800">✓ write-watch</span>
+                        <span class="px-2 py-1 rounded bg-slate-950 border border-slate-800">✓ Full CTest Matrix</span>
+                    </div>
+                </div>
+
+                <!-- Platform Tabs -->
+                <div class="flex gap-2 border-b border-slate-800 pb-2">
+                    <button id="runner-tab-win" onclick="switchRunnerTab('win')" class="px-3 py-1.5 rounded-lg font-bold bg-cyan-950 text-cyan-300 border border-cyan-700 cursor-pointer">
+                        Windows (PowerShell)
+                    </button>
+                    <button id="runner-tab-docker" onclick="switchRunnerTab('docker')" class="px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200 border border-transparent cursor-pointer">
+                        Linux / Docker
+                    </button>
+                    <button id="runner-tab-mgr" onclick="switchRunnerTab('mgr')" class="px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200 border border-transparent cursor-pointer">
+                        Maintainer CLI
+                    </button>
+                </div>
+
+                <!-- Tab 1: Windows -->
+                <div id="runner-content-win" class="space-y-2">
+                    <p class="text-slate-300 text-[11px]">Run the automated setup in PowerShell to register your PC as a worker:</p>
+                    <div class="relative bg-slate-950 p-2.5 rounded-lg border border-slate-800 font-mono text-[11px] text-cyan-300 break-all select-all">
+                        <code>powershell -ExecutionPolicy Bypass -File .\runner\setup_windows_runner.ps1</code>
+                    </div>
+                    <p class="text-[10px] text-slate-400">Requires: Git, CMake, Ninja, and Clang or Visual Studio C++ Build Tools.</p>
+                </div>
+
+                <!-- Tab 2: Docker -->
+                <div id="runner-content-docker" class="hidden space-y-2">
+                    <p class="text-slate-300 text-[11px]">Run sandboxed inside an Ubuntu 24.04 container with preinstalled Clang-18 & Vulkan:</p>
+                    <div class="relative bg-slate-950 p-2.5 rounded-lg border border-slate-800 font-mono text-[11px] text-cyan-300 break-all select-all">
+                        <code>cd runner &amp;&amp; docker compose up -d --build</code>
+                    </div>
+                    <p class="text-[10px] text-slate-400">100% isolated inside Docker with optional persistent ccache volume.</p>
+                </div>
+
+                <!-- Tab 3: Maintainer CLI -->
+                <div id="runner-content-mgr" class="hidden space-y-2">
+                    <p class="text-slate-300 text-[11px]">Check online runners or generate tokens for contributors:</p>
+                    <div class="relative bg-slate-950 p-2.5 rounded-lg border border-slate-800 font-mono text-[11px] text-cyan-300 break-all select-all">
+                        <code>python runner/anyps5_runner_manager.py --status</code>
+                    </div>
+                    <p class="text-[10px] text-slate-400">Or trigger CI for a specific PR: <code class="text-slate-300">python runner/anyps5_runner_manager.py --trigger-pr 6834</code></p>
+                </div>
+
+                <!-- Security Assurance -->
+                <div class="p-2.5 rounded-lg bg-emerald-950/30 border border-emerald-800/60 text-[11px] text-emerald-300 flex items-start gap-2">
+                    <span class="text-sm">🛡️</span>
+                    <div>
+                        <strong>100% Sandboxed &amp; Approval Gated:</strong> Community runners never execute unverified PRs. Workflows only trigger after a maintainer adds the <code class="font-mono bg-emerald-950 px-1 py-0.5 rounded text-white">ci:run-build</code> label or for trusted team members.
+                    </div>
+                </div>
+            </div>
+
+            <!-- Modal Footer -->
+            <div class="flex items-center justify-between pt-3 border-t border-slate-800">
+                <button onclick="copyCurrentRunnerCmd()" class="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold transition flex items-center gap-1.5 cursor-pointer">
+                    <span>📋</span>
+                    <span>Copy Setup Command</span>
+                </button>
+                <button onclick="closeRunnerModal()" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold transition cursor-pointer">
+                    Close
+                </button>
             </div>
         </div>
     </div>
